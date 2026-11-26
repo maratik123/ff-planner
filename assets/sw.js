@@ -1,9 +1,9 @@
-var cacheName = 'egui-template-pwa';
+var cacheName = 'ff-planner-pwa';
 var filesToCache = [
   './',
   './index.html',
-  './eframe_template.js',
-  './eframe_template_bg.wasm',
+  './ff_planner.js',
+  './ff_planner_bg.wasm',
 ];
 
 /* Start the service worker and cache all of the app's content */

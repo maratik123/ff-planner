@@ -67,7 +67,7 @@ impl eframe::App for TemplateApp {
 
         egui::CentralPanel::default().show(ui, |ui| {
             // The central panel the region left after adding TopPanel's and SidePanel's
-            ui.heading("eframe template");
+            ui.heading("ff_planner");
 
             ui.horizontal(|ui| {
                 ui.label("Write something: ");
@@ -82,7 +82,7 @@ impl eframe::App for TemplateApp {
             ui.separator();
 
             ui.add(egui::github_link_file!(
-                "https://github.com/emilk/eframe_template/blob/main/",
+                "https://github.com/maratik123/ff-planner/blob/main/",
                 "Source code."
             ));
 
