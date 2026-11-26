@@ -9,6 +9,7 @@ Rust + egui/eframe desktop and WASM app ("ff-planner", a settlement/layout plann
 - Toolchain pinned in `rust-toolchain` (1.100.0, rustfmt/clippy, wasm32 target). Do not bypass it with `rustup default`.
 
 ## Architecture / conventions
+- Dependency versions in `Cargo.toml` follow semver-minimized rules: `0.x.y` is written as `0.x` (e.g. `env_logger = "0.11"`), and `x.y.z` is written as `x` (e.g. `serde = { version = "1", ... }`). The package's own `version` and `rust-version` are exempt.
 - Native and WASM share one codebase via `cfg(target_arch = "wasm32")` branches in `main.rs`; keep platform-specific code behind those cfgs.
 - egui app state is serde-persisted via eframe `persistence` (`cc.storage`, `APP_KEY`); fields added to the app struct should be `#[serde]`-compatible (defaults) so old saved state still loads.
 - `index.html` has hard-coded element ids (`the_canvas_id`, `loading_text`) that `src/main.rs` expects — keep them in sync.
