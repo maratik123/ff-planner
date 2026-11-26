@@ -8,7 +8,7 @@
 
 ## Сборка и запуск
 
-Требуется Rust (см. `rust-toolchain`, канал 1.100.0).
+Требуется Rust.
 
 ```sh
 cargo run --release
