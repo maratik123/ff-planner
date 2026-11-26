@@ -82,7 +82,7 @@ impl eframe::App for TemplateApp {
             ui.separator();
 
             ui.add(egui::github_link_file!(
-                "https://github.com/maratik123/ff-planner/blob/main/",
+                "https://github.com/maratik123/ff-planner",
                 "Source code."
             ));
 
