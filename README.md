@@ -1,6 +1,6 @@
 # ff-planner
 
-Планировщик поселений для игры [Farthest Frontier](https://steamcommunity.com/app/1071540/):
+Планировщик поселений для игры [Farthest Frontier](https://steamcommunity.com/app/1044720):
 просмотр, редактор и генератор layout-ов на Rust.
 
 Приложение построено на [egui](https://github.com/emilk/egui) / [eframe](https://github.com/emilk/egui/tree/master/crates/eframe) и может
