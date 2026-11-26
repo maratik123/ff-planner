@@ -20,3 +20,7 @@ Rust + egui/eframe desktop and WASM app ("ff-planner", a settlement/layout plann
 
 ## Repo state
 Currently a scaffolded egui template (`TemplateApp` in `src/app.rs` is demo content). The real planner domain code is not yet present; expect to add modules under `src/` — keep the native/WASM dual-target and persistence patterns.
+
+## Git workflow
+- Commit yourself as you work — do not wait for owner permission to commit.
+- Never push without explicit owner permission; pushing is the one action that requires owner approval.
