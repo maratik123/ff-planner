@@ -13,6 +13,8 @@ pub enum Command {
         instance_id: u64,
         from: TilePos,
         to: TilePos,
+        from_rotation: Rotation,
+        to_rotation: Rotation,
     },
     Rotate {
         instance_id: u64,
@@ -34,7 +36,10 @@ impl Command {
                     .retain(|b| b.instance_id != placed.instance_id);
             }
             Self::Move {
-                instance_id, to, ..
+                instance_id,
+                to,
+                to_rotation,
+                ..
             } => {
                 if let Some(b) = layout
                     .buildings
@@ -42,6 +47,7 @@ impl Command {
                     .find(|b| b.instance_id == *instance_id)
                 {
                     b.pos = *to;
+                    b.rotation = *to_rotation;
                 }
             }
             Self::Rotate {
@@ -70,7 +76,10 @@ impl Command {
                 layout.next_instance_id = layout.next_instance_id.max(placed.instance_id + 1);
             }
             Self::Move {
-                instance_id, from, ..
+                instance_id,
+                from,
+                from_rotation,
+                ..
             } => {
                 if let Some(b) = layout
                     .buildings
@@ -78,6 +87,7 @@ impl Command {
                     .find(|b| b.instance_id == *instance_id)
                 {
                     b.pos = *from;
+                    b.rotation = *from_rotation;
                 }
             }
             Self::Rotate {
@@ -219,6 +229,8 @@ mod tests {
                 instance_id: id,
                 from: TilePos { x: 0, y: 0 },
                 to: TilePos { x: 5, y: 5 },
+                from_rotation: Rotation::Zero,
+                to_rotation: Rotation::Zero,
             },
             &mut layout,
         );
@@ -227,6 +239,36 @@ mod tests {
         assert_eq!(layout.get(id).expect("unwrap").pos, TilePos { x: 0, y: 0 });
         assert!(h.redo(&mut layout));
         assert_eq!(layout.get(id).expect("unwrap").pos, TilePos { x: 5, y: 5 });
+    }
+
+    #[test]
+    fn move_with_rotation_undo_redo() {
+        let mut layout = Layout::default();
+        let id = layout
+            .add("Academy", TilePos { x: 0, y: 0 }, Rotation::Zero)
+            .expect("unwrap");
+        let mut h = LayoutHistory::default();
+        h.exec(
+            Command::Move {
+                instance_id: id,
+                from: TilePos { x: 0, y: 0 },
+                to: TilePos { x: 5, y: 5 },
+                from_rotation: Rotation::Zero,
+                to_rotation: Rotation::R90,
+            },
+            &mut layout,
+        );
+        let b = layout.get(id).expect("unwrap");
+        assert_eq!(b.pos, TilePos { x: 5, y: 5 });
+        assert_eq!(b.rotation, Rotation::R90);
+        assert!(h.undo(&mut layout));
+        let b = layout.get(id).expect("unwrap");
+        assert_eq!(b.pos, TilePos { x: 0, y: 0 });
+        assert_eq!(b.rotation, Rotation::Zero);
+        assert!(h.redo(&mut layout));
+        let b = layout.get(id).expect("unwrap");
+        assert_eq!(b.pos, TilePos { x: 5, y: 5 });
+        assert_eq!(b.rotation, Rotation::R90);
     }
 
     #[test]

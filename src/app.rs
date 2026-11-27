@@ -1,5 +1,6 @@
 use egui::Vec2;
 
+use crate::canvas::DragState;
 use crate::history::LayoutHistory;
 use crate::placement::Layout;
 
@@ -25,6 +26,8 @@ pub struct TemplateApp {
     pub(crate) zoom: f32,
     #[serde(skip)]
     pub(crate) history: LayoutHistory,
+    #[serde(skip)]
+    pub(crate) drag: Option<DragState>,
 }
 
 impl Default for TemplateApp {
@@ -37,6 +40,7 @@ impl Default for TemplateApp {
             pan: Vec2::ZERO,
             zoom: 1.0,
             history: LayoutHistory::default(),
+            drag: None,
         }
     }
 }
