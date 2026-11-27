@@ -17,3 +17,6 @@ tools/building-dump/bin/
 tools/building-dump/obj/
 tools/building-dump/test/bin/
 tools/building-dump/test/obj/
+
+# Jetbrains IDE
+.idea
