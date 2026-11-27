@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <AssemblyName>BuildingDumpMod</AssemblyName>
+    <RootNamespace>BuildingDumpMod</RootNamespace>
+    <LangVersion>7.3</LangVersion>
+    <EnableDefaultItems>false</EnableDefaultItems>
+    <NoWarn>CS0618;CS0168;CS0219;CS0649</NoWarn>
+    <!-- Point this at the Mono build install of Farthest Frontier, e.g.
+         dotnet build -p:GamePath="/path/to/Farthest Frontier (Mono)"
+         If empty, the reference resolution below fails - pass -p:GamePath=... -->
+    <GamePath Condition="'$(GamePath)' == ''">/home/syt/.steam/steam/steamapps/common/Farthest Frontier/Farthest Frontier (Mono)</GamePath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="DumpLogic.cs" />
+    <Compile Include="BuildingDumpMod.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="MelonLoader">
+      <HintPath>$(GamePath)/MelonLoader/net35/MelonLoader.dll</HintPath>
+    </Reference>
+    <Reference Include="Assembly-CSharp">
+      <HintPath>$(GamePath)/Farthest Frontier_Data/Managed/Assembly-CSharp.dll</HintPath>
+    </Reference>
+    <Reference Include="Newtonsoft.Json">
+      <HintPath>$(GamePath)/Farthest Frontier_Data/Managed/Newtonsoft.Json.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+
+</Project>

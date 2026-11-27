@@ -11,3 +11,9 @@ target_wasm
 
 # https://github.com/lycheeverse/lychee
 .lycheecache
+
+# C# mod build artifacts
+tools/building-dump/bin/
+tools/building-dump/obj/
+tools/building-dump/test/bin/
+tools/building-dump/test/obj/
