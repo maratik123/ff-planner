@@ -11,7 +11,7 @@ Rust + egui/eframe desktop and WASM app ("ff-planner", a settlement/layout plann
 ## Architecture / conventions
 - Dependency versions in `Cargo.toml` follow semver-minimized rules: `0.x.y` is written as `0.x` (e.g. `env_logger = "0.11"`), and `x.y.z` is written as `x` (e.g. `serde = { version = "1", ... }`). The package's own `version` and `rust-version` are exempt.
 - Native and WASM share one codebase via `cfg(target_arch = "wasm32")` branches in `main.rs`; keep platform-specific code behind those cfgs.
-- egui app state is serde-persisted via eframe `persistence` (`cc.storage`, `APP_KEY`); fields added to the app struct should be `#[serde]`-compatible (defaults) so old saved state still loads.
+- egui app state is serde-persisted via eframe `persistence` (`cc.storage`, `APP_KEY`); fields added to the app struct should be `#[serde]`-compatible (defaults) so old saved state still loads. Schema versioning lives in `src/app.rs` (`CURRENT_SCHEMA_VERSION` + `TemplateApp::migrate()`): bump it and add a migrate step whenever the persisted layout changes (see `docs/0.2-state-versioning.md`).
 - `index.html` has hard-coded element ids (`the_canvas_id`, `loading_text`) that `src/main.rs` expects — keep them in sync.
 - Lints are strict: `Cargo.toml` workspace lints (`clippy::all` + `pedantic`, many extra warns, `unsafe_code = deny`). CI sets `RUSTFLAGS=-D warnings` and `RUSTDOCFLAGS=-D warnings`; `check.sh` denies warnings in clippy. Follow the existing style; don't silence lints casually.
 - Test Driven Development.
