@@ -133,11 +133,14 @@ impl eframe::App for TemplateApp {
             .show(ui, |ui| {
                 self.inspector_panel(ui);
             });
+        egui::Panel::bottom("status_bar")
+            .resizable(false)
+            .default_size(24.0)
+            .show(ui, |ui| {
+                self.status_bar(ui);
+            });
         egui::CentralPanel::default().show(ui, |ui| {
             self.canvas_panel(ui);
-        });
-        egui::Panel::bottom("status_bar").show(ui, |ui| {
-            self.status_bar(ui);
         });
     }
 
