@@ -27,3 +27,6 @@ Rust + egui/eframe desktop and WASM app ("ff-planner", a settlement/layout plann
 ## Git workflow
 - Commit yourself as you work — do not wait for owner permission to commit.
 - Never push without explicit owner permission; pushing is the action that requires owner approval.
+
+## Planning docs
+- `docs/README.md` — индекс планирования разработки; перед началом работы зачитай этот файл и выбери подзадачу, не трогая чужие фазы.
