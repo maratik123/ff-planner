@@ -15,6 +15,11 @@ Rust + egui/eframe desktop and WASM app ("ff-planner", a settlement/layout plann
 - `index.html` has hard-coded element ids (`the_canvas_id`, `loading_text`) that `src/main.rs` expects — keep them in sync.
 - Lints are strict: `Cargo.toml` workspace lints (`clippy::all` + `pedantic`, many extra warns, `unsafe_code = deny`). CI sets `RUSTFLAGS=-D warnings` and `RUSTDOCFLAGS=-D warnings`; `check.sh` denies warnings in clippy. Follow the existing style; don't silence lints casually.
 - Test Driven Development.
+- Public API: only the entry points consumers actually call (e.g. `all()`) plus the types (recursively, including fields) they return. Everything else is private.
+- No `pub` on helpers, fields, or modules that consumers don't need.
+- No assert/panic in production code except `expect` where a failure is a compile-time-known artifact; all checks live in tests.
+- Comments: keep only why-comments that the code can't express; never re-state the code; minimize them.
+- Paths to embedded data: build with `include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/..."))`, not relative literals.
 
 ## CI
 `.github/workflows/rust.yml`: cargo check (native + wasm32), fmt, clippy, `cargo test --lib`, `trunk build`, release builds for macOS/Windows/Linux(musl via cross). `pages.yml` deploys `trunk build --release --public-url ...` to GitHub Pages on main.

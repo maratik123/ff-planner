@@ -1,34 +1,23 @@
-//! Properties of buildings from the in-game dump (`data/building_dump.json`).
-//!
-//! The dump is embedded at compile time with [`include_str!`] and parsed lazily
-//! on first access to [`all`]. All enum-like fields are mapped to Rust enums;
-//! ordered/unordered collections are used where appropriate.
-
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 
 use serde::Deserialize;
 
-/// Raw JSON embedded into the binary at compile time.
-const RAW: &str = include_str!("../data/building_dump.json");
+const RAW: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/data/building_dump.json"
+));
 
-/// An area in grid cells, e.g. a building footprint.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Rect {
-    /// Width in cells.
     pub width: u32,
-    /// Height in cells.
     pub height: u32,
 }
 
 impl Rect {
-    /// Builds a `Rect` from float dimensions, truncating (flooring) them down
-    /// to cell counts. Negative values become 0.
-    ///
-    /// The cast is intentional: after flooring, values are integer, non-negative;
-    /// only values above `u32::MAX` could truncate, which cannot happen in practice.
+    // Floored and clamped so the cast can only truncate unreachable huge values.
     #[expect(clippy::cast_possible_truncation)]
-    pub fn from_floats(width: f32, height: f32) -> Self {
+    fn from_floats(width: f32, height: f32) -> Self {
         Self {
             width: width.floor().max(0.0).min(u32::MAX as f32) as u32,
             height: height.floor().max(0.0).min(u32::MAX as f32) as u32,
@@ -37,8 +26,6 @@ impl Rect {
 }
 
 impl<'de> Deserialize<'de> for Rect {
-    /// Builds a `Rect` from a JSON object `{"width": <number>, "height": <number>}`,
-    /// flooring the float dimensions to cell counts.
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
@@ -53,7 +40,6 @@ impl<'de> Deserialize<'de> for Rect {
     }
 }
 
-/// What category a building belongs to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum Category {
@@ -68,7 +54,6 @@ pub enum Category {
     Shelter,
 }
 
-/// The group a building belongs to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum BuildGroup {
@@ -79,7 +64,6 @@ pub enum BuildGroup {
     Road,
 }
 
-/// Whether a buildsite is cleared before a building is constructed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum BuildsiteClearingMode {
@@ -87,7 +71,6 @@ pub enum BuildsiteClearingMode {
     NoClear,
 }
 
-/// The grid type a building can be placed on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
 pub enum PlaceableGridType {
     #[serde(rename = "StrategicPlanning")]
@@ -118,62 +101,34 @@ pub enum PlaceableGridType {
     WorkCamp,
 }
 
-/// A building from the dump. Order of neighbors is not meaningful; the
-/// identifier is the outer `HashMap` key, not a field of this struct.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Building {
-    /// Whether a max-allowed limit is enforced.
     pub enforce_max_allowed: bool,
-    /// Maximum number of this building allowed.
     pub max_allowed: u32,
-    /// Weight used when catching fire.
     pub weight_to_catch_fire: u32,
-    /// The grid type this building can be placed on.
     pub placeable_grid_type: PlaceableGridType,
-    /// Default number of builders.
     pub default_builders: u32,
-    /// Maximum number of builders.
     pub max_builders: u32,
-    /// Work needed to construct this building.
     pub work_required_to_construct: u32,
-    /// Gold needed to relocate this building.
     pub gold_required_to_relocate: u32,
-    /// Work needed to deconstruct this building.
     pub work_required_to_deconstruct: u32,
-    /// Border width of the details inset in the UI.
     pub clear_details_border_width: f32,
-    /// How the buildsite is cleared before construction.
     pub buildsite_clearing_mode: BuildsiteClearingMode,
-    /// The group the building belongs to.
     pub build_group: BuildGroup,
-    /// Whether this building is subject to reserves.
     pub subject_to_reserves: bool,
-    /// Modifier applied to item lifetime.
     pub item_lifetime_modifier: f32,
-    /// Default number of workers.
     pub default_workers: u32,
-    /// Maximum number of workers.
     pub max_workers: u32,
-    /// Category of the building.
     pub category: Category,
-    /// Whether similar buildings are highlighted when this one is selected.
     pub highlight_similar_buildings_on_select: bool,
-    /// Whether the materials list was marked dirty.
     pub materials_list_dirty: bool,
-    /// Footprint size in cells (`grid_w` x `grid_h`).
     pub grid: Rect,
-    /// Buildings required to be built/learned before this building.
     pub prerequisites: HashSet<String>,
-    /// Materials needed to construct this building.
     pub materials: HashMap<String, u32>,
-    /// Materials produced right after construction.
     pub materials_after_construction: HashMap<String, u32>,
-    /// Identifiers of the lower tiers this building is related to.
     pub lower_tier_identifiers: HashSet<String>,
 }
 
-/// Wrapper used only for parsing the dump; the identifier is used as the
-/// `HashMap` key in [`all`].
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RawBuilding {
@@ -239,37 +194,24 @@ impl From<RawBuilding> for Building {
     }
 }
 
-/// Raw dump structure used only for parsing; not exposed to callers.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct BuildingDump {
-    total: u32,
     buildings: Vec<RawBuilding>,
 }
 
-/// Returns all buildings indexed by their identifier.
-///
-/// The embedded dump is parsed on first call and cached in a `OnceLock`.
-///
 /// # Panics
-///
-/// Panics if the embedded dump cannot be parsed. This is a compile-time-known
-/// artifact, so a failure here means the dump is corrupted at build time.
+/// Panics if the embedded dump cannot be parsed.
 pub fn all() -> &'static HashMap<String, Building> {
     static MAP: OnceLock<HashMap<String, Building>> = OnceLock::new();
     MAP.get_or_init(|| {
         let dump: BuildingDump =
             serde_json::from_str(RAW).expect("embedded building dump must parse");
-        assert_eq!(
-            dump.total as usize,
-            dump.buildings.len(),
-            "embedded dump: total is inconsistent with buildings"
-        );
         dump.buildings
             .into_iter()
-            .map(|building| {
-                let identifier = building.identifier.clone();
-                (identifier, Building::from(building))
+            .map(|raw| {
+                let identifier = raw.identifier.clone();
+                (identifier, Building::from(raw))
             })
             .collect()
     })
@@ -279,22 +221,25 @@ pub fn all() -> &'static HashMap<String, Building> {
 mod tests {
     use super::*;
 
-    /// Parses the raw dump for structural validation in tests.
     fn raw_dump() -> BuildingDump {
         serde_json::from_str(RAW).expect("embedded building dump must parse")
     }
 
     #[test]
     fn parses_without_failure() {
-        let map = all();
-        assert!(!map.is_empty());
+        assert!(!all().is_empty());
     }
 
     #[test]
     fn total_matches_number_of_buildings() {
-        let dump = raw_dump();
-        assert_eq!(dump.total as usize, dump.buildings.len());
-        assert_eq!(all().len(), dump.buildings.len());
+        let value: serde_json::Value = serde_json::from_str(RAW).expect("valid dump json");
+        let total = value["total"].as_u64().expect("total must be a number");
+        let len = value["buildings"]
+            .as_array()
+            .expect("buildings must be an array")
+            .len();
+        assert_eq!(usize::try_from(total).expect("total must fit usize"), len);
+        assert_eq!(all().len(), len);
     }
 
     #[test]
