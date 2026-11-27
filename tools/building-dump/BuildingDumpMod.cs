@@ -12,7 +12,7 @@ namespace BuildingDumpMod
             try
             {
                 var dump = DumpLogic.BuildDump();
-                var outDir = Path.Combine(Directory.GetCurrentDirectory(), "MelonLoader", "UserData");
+                var outDir = Path.Combine(Directory.GetCurrentDirectory(), "UserData");
                 Directory.CreateDirectory(outDir);
                 var path = Path.Combine(outDir, "building_dump.json");
                 File.WriteAllText(path, dump.ToString(Newtonsoft.Json.Formatting.Indented));
