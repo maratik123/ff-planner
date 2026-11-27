@@ -2,6 +2,7 @@ use super::category_color;
 use crate::app::TemplateApp;
 use crate::buildings::{Category, all};
 use crate::history::Command;
+use crate::validation::IssueKind;
 
 impl TemplateApp {
     pub(crate) fn inspector_panel(&mut self, ui: &mut egui::Ui) {
@@ -38,6 +39,38 @@ impl TemplateApp {
             }
         } else {
             ui.label("No building selected.");
+        }
+
+        ui.separator();
+        ui.heading("Issues");
+        let issues = self.layout.validate();
+        if issues.is_empty() {
+            ui.label("No issues.");
+        } else {
+            ui.label(format!(
+                "{} issue{}",
+                issues.len(),
+                if issues.len() == 1 { "" } else { "s" }
+            ));
+            egui::ScrollArea::vertical()
+                .max_height(160.0)
+                .show(ui, |ui| {
+                    for issue in &issues {
+                        let color = match issue.kind {
+                            IssueKind::Overlap => egui::Color32::from_rgb(0xff, 0, 0),
+                            _ => egui::Color32::from_rgb(0xff, 0xa5, 0x00),
+                        };
+                        ui.colored_label(
+                            color,
+                            format!(
+                                "{}: {} (instance {})",
+                                issue.kind.label(),
+                                issue.detail,
+                                issue.instance_id
+                            ),
+                        );
+                    }
+                });
         }
 
         ui.separator();

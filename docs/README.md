@@ -9,7 +9,7 @@
 ## Фаза 1 — Ядро лейаута
 - [1.1](1.1-undo-redo.md) Undo/redo
 - [x](1.2-drag-move-ghost.md) Drag & drop + ghost-превью
-- [1.3](1.3-validation.md) Валидация лейаута
+- [x](1.3-validation.md) Валидация лейаута
 - [1.4](1.4-multi-select-edit.md) Множественное выделение + редактирование
 
 ## Фаза 2 — Аналитика

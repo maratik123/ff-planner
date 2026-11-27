@@ -6,4 +6,5 @@ mod canvas;
 pub mod history;
 mod panels;
 pub mod placement;
+pub mod validation;
 pub use app::TemplateApp;

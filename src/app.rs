@@ -78,6 +78,26 @@ impl TemplateApp {
         }
     }
 
+    fn status_bar(&self, ui: &mut egui::Ui) {
+        let issues = self.layout.validate();
+        ui.horizontal(|ui| {
+            ui.label(format!("Buildings: {}", self.layout.buildings.len()));
+            ui.separator();
+            if issues.is_empty() {
+                ui.label("No validation issues");
+            } else {
+                ui.colored_label(
+                    egui::Color32::from_rgb(0xff, 0xa5, 0x00),
+                    format!(
+                        "{} validation issue{}",
+                        issues.len(),
+                        if issues.len() == 1 { "" } else { "s" }
+                    ),
+                );
+            }
+        });
+    }
+
     fn handle_shortcuts(&mut self, ui: &egui::Ui) {
         let mods = ui.input(|i| i.modifiers);
         let z = ui.input(|i| i.key_pressed(egui::Key::Z));
@@ -115,6 +135,9 @@ impl eframe::App for TemplateApp {
             });
         egui::CentralPanel::default().show(ui, |ui| {
             self.canvas_panel(ui);
+        });
+        egui::Panel::bottom("status_bar").show(ui, |ui| {
+            self.status_bar(ui);
         });
     }
 
