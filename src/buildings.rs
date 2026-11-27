@@ -259,14 +259,16 @@ mod tests {
     fn grid_values_are_integer_valued() {
         let dump = raw_dump();
         for raw in &dump.buildings {
-            assert!(
-                raw.grid_w.fract() == 0.0,
+            assert_eq!(
+                raw.grid_w.fract(),
+                0.0,
                 "gridW of {} is fractional: {}",
                 raw.identifier,
                 raw.grid_w
             );
-            assert!(
-                raw.grid_h.fract() == 0.0,
+            assert_eq!(
+                raw.grid_h.fract(),
+                0.0,
                 "gridH of {} is fractional: {}",
                 raw.identifier,
                 raw.grid_h
