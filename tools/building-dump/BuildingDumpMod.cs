@@ -2,11 +2,13 @@ using System;
 using System.IO;
 using MelonLoader;
 
+[assembly: MelonInfo(typeof(BuildingDumpMod.BuildingDumpMod), "BuildingDumpMod", "1.0.0", "ff-planner")]
+
 namespace BuildingDumpMod
 {
     public class BuildingDumpMod : MelonMod
     {
-        public override void OnApplicationStart()
+        public override void OnInitializeMelon()
         {
             MelonLogger.Msg("BuildingDumpMod: starting");
             try

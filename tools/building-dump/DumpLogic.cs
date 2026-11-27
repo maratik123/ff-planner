@@ -1,7 +1,6 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using System.Reflection;
 using Newtonsoft.Json;
@@ -13,41 +12,56 @@ namespace BuildingDumpMod
     // exercised from a console harness.
     public static class DumpLogic
     {
+        // Curated scalar field mappings (instance field/property name -> JSON key).
+        // Objects beyond these scalars (Vector2, lists, prefabs, enums) are handled
+        // explicitly or fall into `extra`.
+        private static readonly Dictionary<string, string> CuratedMap = new Dictionary<string, string>
+        {
+            { "identifier", "identifier" },
+            { "uiBuildCategory", "category" },
+            { "buildGroup", "buildGroup" },
+            { "defaultBuilders", "defaultBuilders" },
+            { "maxBuilders", "maxBuilders" },
+            { "workRequiredToConstruct", "workRequiredToConstruct" },
+            { "goldRequiredToRelocate", "goldRequiredToRelocate" },
+            { "workRequiredToDeconstruct", "workRequiredToDeconstruct" },
+            { "enforceMaxAllowed", "enforceMaxAllowed" },
+            { "maxAllowed", "maxAllowed" },
+            { "weightToCatchFire", "weightToCatchFire" },
+            { "highlightSimilarBuildingsOnSelect", "highlightSimilarBuildingsOnSelect" },
+            { "subjectToReserves", "subjectToReserves" },
+            { "itemLifetimeModifier", "itemLifetimeModifier" },
+            { "defaultWorkers", "defaultWorkers" },
+            { "maxWorkers", "maxWorkers" },
+            { "buildsiteClearingMode", "buildsiteClearingMode" },
+            { "placeableGridType", "placeableGridType" },
+            { "clearDetailsBorderWidth", "clearDetailsBorderWidth" },
+            { "materialsListDirty", "materialsListDirty" },
+        };
+
+        // Members consumed by the curated sections; never appear in `extra`.
+        private static readonly HashSet<string> ConsumedNames = new HashSet<string>
+        {
+            "gridSize", "prerequisiteIdentifiers", "buildingMaterials", "lowerTierIdentifiers", "notes"
+        };
+
         public static JObject BuildDump()
         {
-            var buildingsAsm = AppDomain.CurrentDomain.GetAssemblies()
-                .FirstOrDefault(a => a.GetName().Name == "Assembly-CSharp");
-            var buildingType = buildingsAsm == null
-                ? null
-                : AllTypes(buildingsAsm).FirstOrDefault(t => t.Name == "BuildingData");
-            if (buildingType == null)
-            {
-                buildingType = AppDomain.CurrentDomain.GetAssemblies()
-                    .SelectMany(AllTypes)
-                    .FirstOrDefault(t => t.Name == "BuildingData");
-            }
-
+            var buildingType = ResolveBuildingType();
+            var registry = ResolveRegistry(buildingType);
             var buildings = new List<JObject>();
-            var registrySource = "";
+            string registrySource = "";
 
-            if (buildingType != null)
+            if (buildingType != null && registry.Item2 != null)
             {
-                foreach (var source in FindRegistries(buildingType))
+                registrySource = registry.Item1;
+                foreach (var item in registry.Item2)
                 {
-                    var count = 0;
-                    foreach (var item in source.Value)
-                    {
-                        if (item == null) continue;
-                        buildings.Add(BuildEntry(item, buildingType));
-                        count++;
-                    }
-                    if (count > 0)
-                    {
-                        registrySource = source.Name;
-                        break;
-                    }
-                    registrySource = source.Name;
+                    if (item == null) continue;
+                    if (!buildingType.IsInstanceOfType(item)) continue;
+                    buildings.Add(BuildEntry(item, buildingType));
                 }
+                if (buildings.Count == 0) registrySource = "";
             }
 
             return new JObject
@@ -60,430 +74,258 @@ namespace BuildingDumpMod
             };
         }
 
+        private static Type ResolveBuildingType()
+        {
+            return AppDomain.CurrentDomain.GetAssemblies()
+                .SelectMany(a => AllTypes(a))
+                .FirstOrDefault(t => t.Name == "BuildingData");
+        }
+
+        // Returns (registryName, enumerable of BuildingData)
+        private static Tuple<string, IEnumerable> ResolveRegistry(Type buildingType)
+        {
+            // 1. Typed path: GlobalAssets.buildingSetupData.buildingData
+            try
+            {
+                var assetsType = AppDomain.CurrentDomain.GetAssemblies()
+                    .SelectMany(a => AllTypes(a))
+                    .FirstOrDefault(t => t.Name == "GlobalAssets");
+                if (assetsType != null)
+                {
+                    var prop = assetsType.GetProperty("buildingSetupData",
+                        BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+                    var setup = prop?.GetValue(null, null);
+                    if (setup != null)
+                    {
+                        var list = GetMemberValue(setup, "buildingData");
+                        if (list is IEnumerable en)
+                        {
+                            return Tuple.Create("GlobalAssets.buildingSetupData.buildingData",
+                                (IEnumerable)en);
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLog("ResolveRegistry (GlobalAssets path) failed: " + ex.Message);
+            }
+
+            // 2. Fallback: any static property/field whose value enumerates BuildingData
+            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                foreach (var type in AllTypes(asm))
+                {
+                    foreach (var mem in type.GetMembers(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic))
+                    {
+                        object val;
+                        string name;
+                        switch (mem)
+                        {
+                            case PropertyInfo p:
+                                if (!p.CanRead || p.GetIndexParameters().Length > 0) continue;
+                                try { val = p.GetValue(null, null); } catch { continue; }
+                                name = p.Name;
+                                break;
+                            case FieldInfo f:
+                                try { val = f.GetValue(null); } catch { continue; }
+                                name = f.Name;
+                                break;
+                            default:
+                                continue;
+                        }
+                        if (val is string) continue;
+                        if (!(val is IEnumerable en2)) continue;
+                        bool isBuildings = false;
+                        try
+                        {
+                            foreach (var item in en2)
+                            {
+                                if (item != null && buildingType != null && buildingType.IsInstanceOfType(item))
+                                { isBuildings = true; break; }
+                            }
+                        }
+                        catch { continue; }
+                        if (isBuildings)
+                        {
+                            return Tuple.Create($"{type.Name}.{name}", en2);
+                        }
+                    }
+                }
+            }
+            return Tuple.Create<string, IEnumerable>("", null);
+        }
+
         private static JObject BuildEntry(object building, Type buildingType)
         {
             var entry = new JObject();
-            var fields = CollectFields(buildingType, building, out var extra);
+            var extra = new JObject();
+            var seen = new HashSet<string>();
 
-            SetString(entry, "identifier", FindString(fields, "identifier", "id", "key", "buildingName", "buildingIdentifier"));
-            SetString(entry, "category", FindString(fields, "buildingCategory", "category", "buildingCategoryName"));
-            SetNumber(entry, "gridW", FindNumber(fields, "gridWidth", "gridW", "width", "sizeX"));
-            SetNumber(entry, "gridH", FindNumber(fields, "gridHeight", "gridH", "height", "sizeY"));
-            SetNumber(entry, "labor", FindNumber(fields, "labor", "laborCost", "laborersRequired", "laborNeeded", "requiredLabor"));
-            SetNumber(entry, "relocateGold", FindNumber(fields, "relocateGold", "relocationGold", "relocateCost", "relocate"));
-            SetNumber(entry, "deconstruct", FindNumber(fields, "deconstruct", "deconstructCost", "destructionCost", "demolish"));
-            SetNumber(entry, "desirabilityBonus", FindNumber(fields, "desirabilityBonus", "additionalDesirability", "bonusDesirability"));
-            SetNumber(entry, "desirabilityRadius", FindNumber(fields, "desirabilityRadius"));
-            SetBool(entry, "dropoffEnabled", FindNumber(fields, "dropoffEnabled", "allowDropoff", "dropOffEnabled", "allowDropOff"));
-            SetBool(entry, "allowMultiple", FindNumber(fields, "allowMultiple", "allowMultipleBuildings", "multipleAllowed"));
-            SetString(entry, "tag", FindString(fields, "tag", "buildingTag", "buildingTagName"));
+            // Collect members: public instance fields + readable public properties (no indexers)
+            var members = new List<Tuple<string, object>>();
+            foreach (var f in buildingType.GetFields(BindingFlags.Public | BindingFlags.Instance))
+            {
+                object val;
+                try { val = f.GetValue(building); } catch { continue; }
+                members.Add(Tuple.Create(f.Name, val));
+            }
+            foreach (var p in buildingType.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+            {
+                if (p.GetIndexParameters().Length > 0) continue;
+                if (!p.CanRead) continue;
+                object val;
+                try { val = p.GetValue(building, null); } catch { continue; }
+                if (members.Any(m => m.Item1 == p.Name)) continue; // field already collected
+                members.Add(Tuple.Create(p.Name, val));
+            }
 
-            var radii = FindRadiusMap(fields);
-            if (radii.Properties().Count() > 0) entry["radii"] = radii;
-            var prereqs = FindPrereqArray(fields);
-            if (prereqs.Count > 0) entry["prerequisites"] = prereqs;
-            var mats = FindMaterialMap(fields);
-            if (mats.Properties().Count() > 0) entry["materials"] = mats;
+            // ---- scalar curated / extra ----
+            foreach (var m in members)
+            {
+                var name = m.Item1;
+                var val = m.Item2;
+                if (val is null) continue;
+                if (val is string || val is bool || val is int || val is short || val is long ||
+                    val is float || val is double || val is char || val is byte)
+                {
+                    if (CuratedMap.TryGetValue(name, out var key))
+                    {
+                        entry[key] = JToken.FromObject(val);
+                        seen.Add(name);
+                    }
+                    else if (!ConsumedNames.Contains(name))
+                    {
+                        extra[name] = JToken.FromObject(val);
+                        seen.Add(name);
+                    }
+                    continue;
+                }
+                // enum values: SerializeValue -> raw name
+                if (val.GetType().IsEnum)
+                {
+                    if (CuratedMap.TryGetValue(name, out var ekey))
+                    {
+                        entry[ekey] = val.ToString();
+                        seen.Add(name);
+                    }
+                    else if (!ConsumedNames.Contains(name))
+                    {
+                        extra[name] = val.ToString();
+                        seen.Add(name);
+                    }
+                    continue;
+                }
+                // strings handled above; everything else (objects) ignored at this stage
+            }
 
-            if (extra != null && extra.Properties().Count() > 0)
+            // ---- gridSize: Vector2-like -> gridW/gridH ----
+            var grid = GetMemberValue(building, "gridSize");
+            if (grid != null)
+            {
+                var x = GetMemberValue(grid, "x");
+                var y = GetMemberValue(grid, "y");
+                if (x != null && y != null)
+                {
+                    entry["gridW"] = JToken.FromObject(x);
+                    entry["gridH"] = JToken.FromObject(y);
+                }
+                seen.Add("gridSize");
+                extra.Remove("gridSize");
+            }
+
+            // ---- prerequisites: List<string> etc. ----
+            var prereq = GetMemberValue(building, "prerequisiteIdentifiers");
+            if (prereq is IEnumerable enPrereq)
+            {
+                var list = new JArray();
+                foreach (var s in enPrereq)
+                {
+                    if (s == null) continue;
+                    var str = s.ToString();
+                    if (!string.IsNullOrEmpty(str)) list.Add(str);
+                }
+                entry["prerequisites"] = list;
+                seen.Add("prerequisiteIdentifiers");
+                extra.Remove("prerequisiteIdentifiers");
+            }
+
+            // ---- materials: List<BuildingMaterialEntry> -> { item: qty } ----
+            var materials = GetMemberValue(building, "buildingMaterials");
+            if (materials is IEnumerable enMats)
+            {
+                var matMap = new JObject();
+                var materialsAfter = new JObject();
+                foreach (var item in enMats)
+                {
+                    if (item == null) continue;
+                    var itemName = GetMemberValue(item, "item")?.ToString();
+                    var quantity = GetMemberValue(item, "quantity");
+                    var addAfter = GetMemberValue(item, "addToStorageAfterConstruction");
+                    if (string.IsNullOrEmpty(itemName)) continue;
+                    matMap[itemName] = quantity == null ? null : JToken.FromObject(quantity);
+                    if (addAfter is bool b && b)
+                        materialsAfter[itemName] = quantity == null ? null : JToken.FromObject(quantity);
+                }
+                entry["materials"] = matMap;
+                if (materialsAfter.Count > 0)
+                    entry["materialsAfterConstruction"] = materialsAfter;
+                seen.Add("buildingMaterials");
+                extra.Remove("buildingMaterials");
+            }
+
+            // ---- lowerTierIdentifiers: List<string> ----
+            var lowerTier = GetMemberValue(building, "lowerTierIdentifiers");
+            if (lowerTier is IEnumerable enLower)
+            {
+                var list = new JArray();
+                foreach (var s in enLower)
+                {
+                    if (s == null) continue;
+                    var str = s.ToString();
+                    if (!string.IsNullOrEmpty(str)) list.Add(str);
+                }
+                if (list.Count > 0)
+                {
+                    entry["lowerTierIdentifiers"] = list;
+                    seen.Add("lowerTierIdentifiers");
+                    extra.Remove("lowerTierIdentifiers");
+                }
+            }
+
+            if (extra.Count > 0)
                 entry["extra"] = extra;
 
             return entry;
         }
 
-        private static void SetString(JObject entry, string key, string value)
+        private static void MelonLog(string msg)
         {
-            if (!string.IsNullOrEmpty(value)) entry[key] = value;
+            Console.WriteLine("[DumpLogic] " + msg);
         }
 
-        private static void SetNumber(JObject entry, string key, JToken value)
+        private static object GetMemberValue(object obj, string name)
         {
-            if (value != null) entry[key] = value;
-        }
-
-        private static void SetBool(JObject entry, string key, JToken value)
-        {
-            if (value == null) return;
-            var s = value.ToString();
-            if (bool.TryParse(s, out var b)) entry[key] = b;
-            else entry[key] = value;
-        }
-
-        // ---- reflection helpers ----
-
-        private static IEnumerable<Type> AllTypes(Assembly a)
-        {
-            try { return a.GetTypes(); }
-            catch { return new Type[0]; }
-        }
-
-        private class RegistryInfo
-        {
-            public string Name;
-            public IEnumerable<object> Value;
-        }
-
-        private static IEnumerable<RegistryInfo> FindRegistries(Type buildingType)
-        {
-            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-            foreach (var type in AllTypes(asm))
+            var t = obj.GetType();
+            var prop = t.GetProperty(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            if (prop != null && prop.CanRead)
             {
-                IEnumerable<PropertyInfo> props;
-                IEnumerable<FieldInfo> fields;
-                try { props = type.GetProperties(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic); }
-                catch { continue; }
-                try { fields = type.GetFields(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic); }
-                catch { continue; }
-
-                foreach (var prop in props)
-                {
-                    var val = SafeGetValue(prop);
-                    if (!IsEnumerableOfElements<object>(val, buildingType)) continue;
-                    yield return new RegistryInfo
-                    {
-                        Name = $"{type.Name}.{prop.Name}",
-                        Value = val as IEnumerable<object> ?? (val as IEnumerable).Cast<object>()
-                    };
-                }
-                foreach (var field in fields)
-                {
-                    var val = SafeGetValue(field);
-                    if (!IsEnumerableOfElements<object>(val, buildingType)) continue;
-                    yield return new RegistryInfo
-                    {
-                        Name = $"{type.Name}.{field.Name}",
-                        Value = val as IEnumerable<object> ?? (val as IEnumerable).Cast<object>()
-                    };
-                }
+                try { return prop.GetValue(obj, null); } catch { }
             }
-        }
-
-        private static object SafeGetValue(PropertyInfo prop)
-        {
-            try { return prop.GetValue(null, null); }
-            catch { return null; }
-        }
-
-        private static object SafeGetValue(FieldInfo field)
-        {
-            try { return field.GetValue(null); }
-            catch { return null; }
-        }
-
-        private static bool IsEnumerableOfElements<T>(object val, Type buildingType)
-        {
-            if (val == null) return false;
-            var en = val as IEnumerable;
-            if (en == null) return false;
-            foreach (var item in en)
+            var field = t.GetField(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            if (field != null)
             {
-                if (item == null) continue;
-                if (buildingType == null) return true;
-                if (buildingType.IsInstanceOfType(item)) return true;
-                return false;
-            }
-            return buildingType == null;
-        }
-
-        private static JObject CollectFields(Type t, object obj, out JObject extra)
-        {
-            extra = new JObject();
-            var dict = new JObject();
-            foreach (var f in t.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
-            {
-                object val;
-                try { val = f.GetValue(obj); }
-                catch { continue; }
-                if (val == null) continue;
-                var conv = ConvertValue(val, 0);
-                if (conv == null) continue;
-                dict[f.Name] = conv;
-                extra[f.Name] = conv;
-            }
-            foreach (var p in t.GetProperties(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
-            {
-                if (!p.CanRead) continue;
-                object val;
-                try { val = p.GetValue(obj, null); }
-                catch { continue; }
-                if (val == null) continue;
-                var conv = ConvertValue(val, 0);
-                if (conv == null) continue;
-                if (!dict.ContainsKey(p.Name)) dict[p.Name] = conv;
-            }
-            // remove curated names from extra to reduce duplication noise
-            var curated = new HashSet<string>(new[]
-            {
-                "buildingIdentifier","identifier","id","key","buildingName",
-                "buildingCategory","category","buildingCategoryName",
-                "gridWidth","gridW","width","sizeX","gridHeight","gridH","height","sizeY",
-                "labor","laborCost","laborersRequired","laborNeeded","requiredLabor",
-                "relocateGold","relocationGold","relocateCost","relocate",
-                "deconstruct","deconstructCost","destructionCost","demolish",
-                "desirabilityBonus","additionalDesirability","bonusDesirability",
-                "desirabilityRadius","desirability",
-                "dropoffEnabled","allowDropoff","dropOffEnabled","allowDropOff",
-                "allowMultiple","allowMultipleBuildings","multipleAllowed",
-                "tag","buildingTag","buildingTagName",
-                "radii","radiuslist","prerequisites","prerequisite","materials","items","resources","materialList"
-            }, StringComparer.OrdinalIgnoreCase);
-
-            var iter = new List<string>(extra.Properties().Select(p => p.Name));
-            foreach (var k in iter)
-            {
-                if (curated.Contains(k)) extra.Remove(k);
-            }
-            return dict;
-        }
-
-        private static JToken ConvertValue(object val, int depth)
-        {
-            if (val == null) return null;
-            if (depth > 3) return new JValue("<complex>");
-
-            var type = val.GetType();
-
-            if (val is string s) return new JValue(s);
-            if (val is bool b) return new JValue(b);
-            if (val is byte || val is sbyte || val is short || val is ushort || val is int || val is uint || val is long || val is ulong)
-                return new JValue(Convert.ToInt64(val));
-            if (val is float) return new JValue((double)(float)val);
-            if (val is double) return new JValue((double)val);
-            if (val is decimal) return new JValue((double)(decimal)val);
-            if (val is DateTime dt) return new JValue(dt.ToString("o"));
-
-            if (type.IsEnum) return new JValue(val.ToString());
-
-            if (type.Namespace != null && type.Namespace.StartsWith("UnityEngine"))
-                return new JValue(val.ToString());
-
-            if (val is IDictionary dict)
-            {
-                var jobj = new JObject();
-                foreach (DictionaryEntry de in dict)
-                {
-                    var key = de.Key?.ToString() ?? "null";
-                    var c = ConvertValue(de.Value, depth + 1);
-                    if (c != null) jobj[key] = c;
-                }
-                return jobj;
-            }
-
-            var en = val as IEnumerable;
-            if (en != null && !(val is string))
-            {
-                var arr = new JArray();
-                foreach (var item in en)
-                {
-                    var c = ConvertValue(item, depth + 1);
-                    if (c != null) arr.Add(c);
-                }
-                return arr;
-            }
-
-            if (type.IsValueType || type.GetProperties().Length > 0 || type.GetFields().Length > 0)
-            {
-                var jobj = new JObject();
-                foreach (var f in type.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
-                {
-                    try
-                    {
-                        var fv = f.GetValue(val);
-                        var c = ConvertValue(fv, depth + 1);
-                        if (c != null) jobj[f.Name] = c;
-                    }
-                    catch { }
-                }
-                if (jobj.Properties().Count() == 0) return new JValue(val.ToString());
-                return jobj;
-            }
-
-            return new JValue(val.ToString());
-        }
-
-        private static JArray FindPrereqArray(JObject fields)
-        {
-            foreach (var prop in fields.Properties())
-            {
-                var name = prop.Name.ToLowerInvariant();
-                if (name.Contains("prereq") || name.Contains("prerequisite") || name.Contains("requires"))
-                {
-                    if (prop.Value is JArray a) return a;
-                    if (prop.Value is JObject o)
-                    {
-                        var nested = o["list"] ?? o["items"] ?? o["prerequisites"];
-                        if (nested is JArray arr) return arr;
-                    }
-                    if (prop.Value is JValue jv)
-                    {
-                        var s = jv.ToString();
-                        if (string.IsNullOrWhiteSpace(s)) return new JArray();
-                        var parts = s.Split(new[] { '|', ',' }, StringSplitOptions.RemoveEmptyEntries).Select(p => p.Trim()).Where(p => p.Length > 0);
-                        return new JArray(parts);
-                    }
-                }
-            }
-            return new JArray();
-        }
-
-        private static JObject FindRadiusMap(JObject fields)
-        {
-            var result = new JObject();
-            foreach (var prop in fields.Properties())
-            {
-                var name = prop.Name.ToLowerInvariant();
-                if (name.Contains("radius") && !name.Contains("desirability"))
-                {
-                    if (prop.Value is JObject o)
-                    {
-                        foreach (var sub in o.Properties())
-                            result[sub.Name] = sub.Value;
-                    }
-                    else if (prop.Value is JArray a)
-                    {
-                        for (int i = 0; i < a.Count; i++)
-                            result[$"{prop.Name}[{i}]"] = a[i];
-                    }
-                    else
-                        result[prop.Name] = prop.Value;
-                }
-            }
-            foreach (var prop in fields.Properties())
-            {
-                var n = prop.Name.ToLowerInvariant();
-                if (n == "radii" || n == "radiuslist")
-                {
-                    if (prop.Value is JObject o)
-                    {
-                        foreach (var sub in o.Properties())
-                            if (!result.ContainsKey(sub.Name)) result[sub.Name] = sub.Value;
-                    }
-                    else if (prop.Value is JArray a)
-                    {
-                        for (int i = 0; i < a.Count; i++)
-                        {
-                            if (a[i] is JObject o2)
-                            {
-                                var key = o2["name"] ?? o2["type"] ?? o2["id"];
-                                var val = o2["value"] ?? o2["radius"] ?? o2["amount"];
-                                if (key != null && val != null) result[key.ToString()] = val;
-                            }
-                        }
-                    }
-                }
-            }
-            return result;
-        }
-
-        private static JObject FindMaterialMap(JObject fields)
-        {
-            var result = new JObject();
-            foreach (var prop in fields.Properties())
-            {
-                var name = prop.Name.ToLowerInvariant();
-                if (!name.Contains("material") && !name.Contains("item") && !name.Contains("resource")) continue;
-
-                var v = prop.Value;
-                if (v is JArray a)
-                {
-                    foreach (var item in a)
-                    {
-                        if (item is JObject o)
-                        {
-                            var id = o["item"] ?? o["id"] ?? o["material"] ?? o["name"] ?? o["itemName"] ?? o["resource"];
-                            var qty = o["count"] ?? o["qty"] ?? o["quantity"] ?? o["amount"] ?? o["value"];
-                            if (id != null && qty != null)
-                                result[id.ToString()] = qty;
-                            else if (id != null && o["count"] == null)
-                                result[id.ToString()] = id;
-                        }
-                        else if (item is JValue jv)
-                        {
-                            var s = jv.ToString().Trim();
-                            foreach (var part in s.Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries))
-                            {
-                                var tokens = part.Trim().Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
-                                if (tokens.Length >= 2 && int.TryParse(tokens[0], out var qty))
-                                    result[string.Join(" ", tokens.Skip(1))] = qty;
-                                else if (tokens.Length == 1)
-                                    result[tokens[0]] = 1;
-                            }
-                        }
-                    }
-                }
-                else if (v is JObject o)
-                {
-                    foreach (var sub in o.Properties())
-                    {
-                        // nested dict: { "ItemPlanks": 50, ... }
-                        if (sub.Value is JValue) result[sub.Name] = sub.Value;
-                        else
-                        {
-                            var qty = sub.Value["count"] ?? sub.Value["qty"] ?? sub.Value["quantity"];
-                            if (qty != null) result[sub.Name] = qty;
-                        }
-                    }
-                }
-                else if (v is JValue jv)
-                {
-                    var s = jv.ToString().Trim();
-                    if (s.Length > 0)
-                    {
-                        // "50 ItemPlanks, 120 ItemStone" style
-                        foreach (var part in s.Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries))
-                        {
-                            var tokens = part.Trim().Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
-                            if (tokens.Length >= 2 && int.TryParse(tokens[0], out var qty))
-                                result[string.Join(" ", tokens.Skip(1))] = qty;
-                            else if (tokens.Length == 1)
-                                result[tokens[0]] = 1;
-                        }
-                    }
-                }
-            }
-            return result;
-        }
-
-        private static string FindString(JObject fields, params string[] names)
-        {
-            foreach (var n in names)
-            {
-                foreach (var prop in fields.Properties())
-                {
-                    if (prop.Name.Equals(n, StringComparison.OrdinalIgnoreCase) && prop.Value != null)
-                        return prop.Value.ToString();
-                }
-            }
-            foreach (var name in names)
-            {
-                foreach (var prop in fields.Properties())
-                {
-                    if (prop.Name.ToLowerInvariant().Contains(name.ToLowerInvariant()) && prop.Value is JValue v)
-                        return v.ToString();
-                }
+                try { return field.GetValue(obj); } catch { }
             }
             return null;
         }
 
-        private static JToken FindNumber(JObject fields, params string[] names)
+        private static IEnumerable<Type> AllTypes(Assembly asm)
         {
-            foreach (var n in names)
-            {
-                foreach (var prop in fields.Properties())
-                {
-                    if (prop.Name.Equals(n, StringComparison.OrdinalIgnoreCase))
-                        return prop.Value;
-                }
-            }
-            foreach (var name in names)
-            {
-                foreach (var prop in fields.Properties())
-                {
-                    if (prop.Name.ToLowerInvariant().Contains(name.ToLowerInvariant()))
-                        return prop.Value;
-                }
-            }
-            return null;
+            Type[] types;
+            try { types = asm.GetTypes(); }
+            catch { yield break; }
+            foreach (var t in types) yield return t;
         }
     }
 }
