@@ -14,6 +14,7 @@ Rust + egui/eframe desktop and WASM app ("ff-planner", a settlement/layout plann
 - egui app state is serde-persisted via eframe `persistence` (`cc.storage`, `APP_KEY`); fields added to the app struct should be `#[serde]`-compatible (defaults) so old saved state still loads.
 - `index.html` has hard-coded element ids (`the_canvas_id`, `loading_text`) that `src/main.rs` expects — keep them in sync.
 - Lints are strict: `Cargo.toml` workspace lints (`clippy::all` + `pedantic`, many extra warns, `unsafe_code = deny`). CI sets `RUSTFLAGS=-D warnings` and `RUSTDOCFLAGS=-D warnings`; `check.sh` denies warnings in clippy. Follow the existing style; don't silence lints casually.
+- Test Driven Development.
 
 ## CI
 `.github/workflows/rust.yml`: cargo check (native + wasm32), fmt, clippy, `cargo test --lib`, `trunk build`, release builds for macOS/Windows/Linux(musl via cross). `pages.yml` deploys `trunk build --release --public-url ...` to GitHub Pages on main.
