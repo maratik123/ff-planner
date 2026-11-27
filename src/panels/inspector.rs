@@ -1,6 +1,7 @@
 use super::category_color;
 use crate::app::TemplateApp;
 use crate::buildings::{Category, all};
+use crate::history::Command;
 
 impl TemplateApp {
     pub(crate) fn inspector_panel(&mut self, ui: &mut egui::Ui) {
@@ -30,7 +31,8 @@ impl TemplateApp {
                 ));
                 ui.separator();
                 if ui.button("Remove").clicked() {
-                    self.layout.remove(b.instance_id);
+                    self.history
+                        .exec(Command::Remove { placed: b.clone() }, &mut self.layout);
                     self.selected = None;
                 }
             }

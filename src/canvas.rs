@@ -2,6 +2,7 @@ use egui::{Color32, CornerRadius, Pos2, Stroke, Vec2, vec2};
 
 use crate::app::TemplateApp;
 use crate::buildings::{Rect, all};
+use crate::history::Command;
 use crate::panels::category_color;
 use crate::placement::{PlacedBuilding, Rotation, TilePos};
 
@@ -136,13 +137,15 @@ impl TemplateApp {
         if self
             .layout
             .can_place(&b.building_identifier, b.pos, new, Some(b.instance_id))
-            && let Some(b_mut) = self
-                .layout
-                .buildings
-                .iter_mut()
-                .find(|b| b.instance_id == id)
         {
-            b_mut.rotation = new;
+            self.history.exec(
+                Command::Rotate {
+                    instance_id: id,
+                    from: b.rotation,
+                    to: new,
+                },
+                &mut self.layout,
+            );
         }
     }
 
@@ -156,8 +159,15 @@ impl TemplateApp {
             x: grid.x - i32::try_from(def.grid.width).unwrap_or(0) / 2,
             y: grid.y - i32::try_from(def.grid.height).unwrap_or(0) / 2,
         };
-        if let Some(id) = self.layout.add(&sel, place, Rotation::Zero) {
-            self.selected = Some(id);
+        if self.layout.can_place(&sel, place, Rotation::Zero, None) {
+            let placed = PlacedBuilding {
+                instance_id: self.layout.next_instance_id,
+                building_identifier: sel.clone(),
+                pos: place,
+                rotation: Rotation::Zero,
+            };
+            self.selected = Some(placed.instance_id);
+            self.history.exec(Command::Add { placed }, &mut self.layout);
         } else {
             self.selected = None;
         }

@@ -1,5 +1,6 @@
 use egui::Vec2;
 
+use crate::history::LayoutHistory;
 use crate::placement::Layout;
 
 /// Current schema version of the persisted app state.
@@ -22,6 +23,8 @@ pub struct TemplateApp {
     pub(crate) palette_selection: Option<String>,
     pub(crate) pan: Vec2,
     pub(crate) zoom: f32,
+    #[serde(skip)]
+    pub(crate) history: LayoutHistory,
 }
 
 impl Default for TemplateApp {
@@ -33,6 +36,7 @@ impl Default for TemplateApp {
             palette_selection: None,
             pan: Vec2::ZERO,
             zoom: 1.0,
+            history: LayoutHistory::default(),
         }
     }
 }
@@ -48,6 +52,39 @@ impl TemplateApp {
         app
     }
 
+    fn undo(&mut self) {
+        if !self.history.undo(&mut self.layout) {
+            return;
+        }
+        if let Some(id) = self.selected
+            && self.layout.get(id).is_none()
+        {
+            self.selected = None;
+        }
+    }
+
+    fn redo(&mut self) {
+        if !self.history.redo(&mut self.layout) {
+            return;
+        }
+        if let Some(id) = self.selected
+            && self.layout.get(id).is_none()
+        {
+            self.selected = None;
+        }
+    }
+
+    fn handle_shortcuts(&mut self, ui: &egui::Ui) {
+        let mods = ui.input(|i| i.modifiers);
+        let z = ui.input(|i| i.key_pressed(egui::Key::Z));
+        let y = ui.input(|i| i.key_pressed(egui::Key::Y));
+        if mods.command && z && mods.shift {
+            self.redo();
+        } else if mods.command && (z || y) {
+            self.undo();
+        }
+    }
+
     /// Lift a loaded save up to the current schema version. Returns true if any migration ran.
     fn migrate(&mut self) -> bool {
         if self.schema_version >= CURRENT_SCHEMA_VERSION {
@@ -61,6 +98,7 @@ impl TemplateApp {
 
 impl eframe::App for TemplateApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.handle_shortcuts(ui);
         egui::Panel::left("palette_panel")
             .default_size(220.0)
             .show(ui, |ui| {
