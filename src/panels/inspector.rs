@@ -18,7 +18,7 @@ impl TemplateApp {
     }
 
     fn single_selected_building(&self) -> Option<&crate::placement::PlacedBuilding> {
-        let id = *self.selected.first()?;
+        let id = *self.selected.last()?;
         let b = self.layout.get(id)?;
         all().contains_key(&b.building_identifier).then_some(b)
     }
@@ -145,6 +145,22 @@ mod tests {
             .expect("add valid");
         app.selected = vec![id]; // selection set after layout mutation
         assert!(app.single_selected_building().is_some());
+    }
+
+    #[test]
+    fn single_selected_building_returns_last_selected() {
+        let mut app = TemplateApp::default();
+        let first = app
+            .layout
+            .add("Academy", TilePos { x: 0, y: 0 }, Rotation::Zero)
+            .expect("add valid");
+        let last = app
+            .layout
+            .add("Academy", TilePos { x: 5, y: 5 }, Rotation::Zero)
+            .expect("add valid");
+        app.selected = vec![first, last];
+        let b = app.single_selected_building().expect("some");
+        assert_eq!(b.instance_id, last);
     }
 
     #[test]

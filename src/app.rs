@@ -79,9 +79,19 @@ impl TemplateApp {
     }
 
     fn load_from_storage(storage: Option<&dyn eframe::Storage>) -> Self {
-        storage
-            .and_then(|s| eframe::get_value(s, eframe::APP_KEY))
-            .unwrap_or_default()
+        let Some(storage) = storage else {
+            return Self::default();
+        };
+        let Some(value) = storage.get_string(eframe::APP_KEY) else {
+            return Self::default();
+        };
+        match ron::from_str::<Self>(&value) {
+            Ok(app) => app,
+            Err(err) => {
+                log::warn!("Failed to decode saved app state: {err}; starting fresh");
+                Self::default()
+            }
+        }
     }
 
     fn undo(&mut self) {
@@ -246,6 +256,57 @@ mod tests {
         let app = TemplateApp::load_from_storage(Some(&storage));
         assert_eq!(app.schema_version, CURRENT_SCHEMA_VERSION);
         assert_eq!(app.layout.buildings.len(), 0);
+    }
+
+    #[test]
+    fn corrupted_save_logs_warning() {
+        use log::{Level, Metadata, Record};
+        use std::sync::{Mutex, OnceLock};
+
+        struct CaptureLogger;
+        static CAPTURE_LOGGER: CaptureLogger = CaptureLogger;
+        static MESSAGES: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
+        impl log::Log for CaptureLogger {
+            fn enabled(&self, _metadata: &Metadata<'_>) -> bool {
+                true
+            }
+            fn log(&self, record: &Record<'_>) {
+                if record.level() <= Level::Warn {
+                    MESSAGES
+                        .get()
+                        .expect("messages initialized")
+                        .lock()
+                        .expect("messages lock")
+                        .push(record.args().to_string());
+                }
+            }
+            fn flush(&self) {}
+        }
+
+        let messages = MESSAGES.get_or_init(|| Mutex::new(Vec::new()));
+        messages.lock().expect("messages lock").clear();
+        log::set_logger(&CAPTURE_LOGGER).expect("logger already set");
+        log::set_max_level(log::LevelFilter::Warn);
+
+        struct MockStorage(Option<String>);
+        impl eframe::Storage for MockStorage {
+            fn get_string(&self, _key: &str) -> Option<String> {
+                self.0.clone()
+            }
+            fn set_string(&mut self, _key: &str, _value: String) {}
+            fn remove_string(&mut self, _key: &str) {}
+            fn flush(&mut self) {}
+        }
+        let storage = MockStorage(Some("not valid ron {{{".to_owned()));
+        let _app = TemplateApp::load_from_storage(Some(&storage));
+
+        let logged = messages.lock().expect("messages lock").clone();
+        assert!(
+            logged
+                .iter()
+                .any(|m| m.contains("Failed to decode saved app state")),
+            "expected a warning about the corrupt save, got: {logged:?}"
+        );
     }
 
     #[test]
