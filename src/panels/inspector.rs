@@ -1,6 +1,6 @@
 use super::category_color;
 use crate::app::TemplateApp;
-use crate::buildings::{Category, all};
+use crate::buildings::all;
 use crate::history::Command;
 use crate::validation::IssueKind;
 
@@ -77,8 +77,8 @@ impl TemplateApp {
         }
     }
 
-    fn issues_panel(&self, ui: &mut egui::Ui) {
-        let issues = self.layout.validate();
+    fn issues_panel(&mut self, ui: &mut egui::Ui) {
+        let issues = self.frame_cache().issues();
         if issues.is_empty() {
             ui.label("No issues.");
         } else {
@@ -90,7 +90,7 @@ impl TemplateApp {
             egui::ScrollArea::vertical()
                 .max_height(160.0)
                 .show(ui, |ui| {
-                    for issue in &issues {
+                    for issue in issues {
                         let color = match issue.kind {
                             IssueKind::Overlap => egui::Color32::from_rgb(0xff, 0, 0),
                             _ => egui::Color32::from_rgb(0xff, 0xa5, 0x00),
@@ -109,26 +109,13 @@ impl TemplateApp {
         }
     }
 
-    fn stats_panel(&self, ui: &mut egui::Ui) {
-        let mut by_category: std::collections::HashMap<Category, u32> =
-            std::collections::HashMap::new();
-        let mut total_cells = 0u32;
-        let mut total = 0u32;
-        for b in &self.layout.buildings {
-            if let Some(def) = all().get(&b.building_identifier) {
-                let dims = b.rotation.dimensions(def.grid);
-                *by_category.entry(def.category).or_insert(0) += 1;
-                total += 1;
-                total_cells += dims.width * dims.height;
-            }
-        }
-        let mut cat_list: Vec<(Category, u32)> = by_category.into_iter().collect();
-        cat_list.sort_by_key(|(c, _)| format!("{c:?}"));
-        ui.label(format!("Buildings: {total}"));
-        ui.label(format!("Total cells: {total_cells}"));
-        for (cat, count) in cat_list {
+    fn stats_panel(&mut self, ui: &mut egui::Ui) {
+        let stats = self.frame_cache().stats();
+        ui.label(format!("Buildings: {}", stats.total));
+        ui.label(format!("Total cells: {}", stats.total_cells));
+        for (cat, count) in &stats.by_category {
             ui.horizontal(|ui| {
-                ui.colored_label(category_color(cat), "■");
+                ui.colored_label(category_color(*cat), "■");
                 ui.label(format!("{cat:?}: {count}"));
             });
         }

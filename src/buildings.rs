@@ -47,18 +47,18 @@ impl<'de> Deserialize<'de> for Rect {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum Category {
     AmenitiesAndServices,
-    ResourceProduction,
-    FoodProduction,
-    Defenses,
     Decorations,
-    WallsAndRoads,
+    Defenses,
+    FoodProduction,
     None,
-    Storage,
+    ResourceProduction,
     Shelter,
+    Storage,
+    WallsAndRoads,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
@@ -284,6 +284,26 @@ mod tests {
             .len();
         assert_eq!(usize::try_from(total).expect("total must fit usize"), len);
         assert_eq!(all().len(), len);
+    }
+
+    #[test]
+    fn category_variants_are_in_debug_lexicographic_order() {
+        let mut variants = [
+            Category::AmenitiesAndServices,
+            Category::Decorations,
+            Category::Defenses,
+            Category::FoodProduction,
+            Category::None,
+            Category::ResourceProduction,
+            Category::Shelter,
+            Category::Storage,
+            Category::WallsAndRoads,
+        ];
+        let mut by_debug = variants;
+        by_debug.sort_by_key(|c| format!("{c:?}"));
+        assert_eq!(variants, by_debug);
+        variants.sort();
+        assert_eq!(variants, by_debug);
     }
 
     #[test]

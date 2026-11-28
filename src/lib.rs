@@ -3,6 +3,7 @@
 mod app;
 pub mod buildings;
 mod canvas;
+mod frame_cache;
 pub mod history;
 mod panels;
 pub mod placement;

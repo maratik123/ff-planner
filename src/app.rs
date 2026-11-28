@@ -2,6 +2,7 @@ use egui::Vec2;
 use serde::Deserialize;
 
 use crate::canvas::DragState;
+use crate::frame_cache::FrameCache;
 use crate::history::LayoutHistory;
 use crate::placement::Layout;
 use crate::selection;
@@ -50,6 +51,8 @@ pub struct TemplateApp {
     pub(crate) history: LayoutHistory,
     #[serde(skip)]
     pub(crate) drag: Option<DragState>,
+    #[serde(skip)]
+    pub(crate) frame_cache: FrameCache,
 }
 
 impl Default for TemplateApp {
@@ -63,6 +66,7 @@ impl Default for TemplateApp {
             zoom: 1.0,
             history: LayoutHistory::default(),
             drag: None,
+            frame_cache: FrameCache::default(),
         }
     }
 }
@@ -94,8 +98,13 @@ impl TemplateApp {
         selection::prune_selection(&self.layout, &mut self.selected);
     }
 
-    fn status_bar(&self, ui: &mut egui::Ui) {
-        let issues = self.layout.validate();
+    pub(crate) fn frame_cache(&mut self) -> &FrameCache {
+        self.frame_cache.ensure(&self.layout);
+        &self.frame_cache
+    }
+
+    fn status_bar(&mut self, ui: &mut egui::Ui) {
+        let issue_count = self.frame_cache().issues().len();
         ui.horizontal(|ui| {
             ui.label(format!("Buildings: {}", self.layout.buildings.len()));
             if !self.selected.is_empty() {
@@ -103,15 +112,15 @@ impl TemplateApp {
                 ui.label(format!("Selected: {}", self.selected.len()));
             }
             ui.separator();
-            if issues.is_empty() {
+            if issue_count == 0 {
                 ui.label("No validation issues");
             } else {
                 ui.colored_label(
                     egui::Color32::from_rgb(0xff, 0xa5, 0x00),
                     format!(
                         "{} validation issue{}",
-                        issues.len(),
-                        if issues.len() == 1 { "" } else { "s" }
+                        issue_count,
+                        if issue_count == 1 { "" } else { "s" }
                     ),
                 );
             }
