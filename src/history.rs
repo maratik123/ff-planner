@@ -120,35 +120,39 @@ const MAX_HISTORY: usize = 100;
 
 #[derive(Debug, Default)]
 pub struct LayoutHistory {
-    undo: Vec<Command>,
-    redo: Vec<Command>,
+    undo: std::collections::VecDeque<Command>,
+    redo: std::collections::VecDeque<Command>,
 }
 
 impl LayoutHistory {
+    fn push_capped(stack: &mut std::collections::VecDeque<Command>, cmd: Command) {
+        stack.push_back(cmd);
+        while stack.len() > MAX_HISTORY {
+            stack.pop_front();
+        }
+    }
+
     pub fn exec(&mut self, cmd: Command, layout: &mut Layout) {
         cmd.apply(layout);
-        self.undo.push(cmd);
-        if self.undo.len() > MAX_HISTORY {
-            self.undo.remove(0);
-        }
+        Self::push_capped(&mut self.undo, cmd);
         self.redo.clear();
     }
 
     pub fn undo(&mut self, layout: &mut Layout) -> bool {
-        let Some(cmd) = self.undo.pop() else {
+        let Some(cmd) = self.undo.pop_back() else {
             return false;
         };
         cmd.revert(layout);
-        self.redo.push(cmd);
+        Self::push_capped(&mut self.redo, cmd);
         true
     }
 
     pub fn redo(&mut self, layout: &mut Layout) -> bool {
-        let Some(cmd) = self.redo.pop() else {
+        let Some(cmd) = self.redo.pop_back() else {
             return false;
         };
         cmd.apply(layout);
-        self.undo.push(cmd);
+        Self::push_capped(&mut self.undo, cmd);
         true
     }
 
@@ -357,6 +361,115 @@ mod tests {
         h.exec(Command::Add { placed }, &mut layout);
         assert!(h.undo(&mut layout));
         assert!(layout.next_instance_id >= 6);
+    }
+
+    #[test]
+    fn redo_stack_capped_at_100_and_undo_capped_after_redo() {
+        let mut layout = Layout::default();
+        let mut h = LayoutHistory::default();
+        let id = layout
+            .add("Academy", TilePos { x: 0, y: 0 }, Rotation::Zero)
+            .expect("unwrap");
+        for i in 0..150i32 {
+            let from = if i % 2 == 0 {
+                Rotation::Zero
+            } else {
+                Rotation::R180
+            };
+            let to = if i % 2 == 0 {
+                Rotation::R180
+            } else {
+                Rotation::Zero
+            };
+            h.exec(
+                Command::Rotate {
+                    instance_id: id,
+                    from,
+                    to,
+                },
+                &mut layout,
+            );
+        }
+        let mut undo_count = 0;
+        while h.undo(&mut layout) {
+            undo_count += 1;
+        }
+        assert_eq!(undo_count, 100);
+        let mut redo_count = 0;
+        while h.redo(&mut layout) {
+            redo_count += 1;
+        }
+        assert_eq!(redo_count, 100);
+        // undo stack must stay capped at 100 after redo
+        let mut undo_count2 = 0;
+        while h.undo(&mut layout) {
+            undo_count2 += 1;
+        }
+        assert_eq!(undo_count2, 100);
+    }
+
+    #[test]
+    fn next_instance_id_invariant_after_undo_redo_add() {
+        let mut layout = Layout::default();
+        let mut h = LayoutHistory::default();
+        let placed = PlacedBuilding {
+            instance_id: 7,
+            building_identifier: "Academy".to_owned(),
+            pos: TilePos { x: 0, y: 0 },
+            rotation: Rotation::Zero,
+        };
+        h.exec(Command::Add { placed }, &mut layout);
+        assert!(h.undo(&mut layout));
+        assert!(
+            layout.next_instance_id
+                > layout
+                    .buildings
+                    .iter()
+                    .map(|b| b.instance_id)
+                    .max()
+                    .unwrap_or(0)
+        );
+        assert!(h.redo(&mut layout));
+        assert!(
+            layout.next_instance_id
+                > layout
+                    .buildings
+                    .iter()
+                    .map(|b| b.instance_id)
+                    .max()
+                    .unwrap_or(0)
+        );
+    }
+
+    #[test]
+    fn next_instance_id_invariant_after_undo_redo_remove() {
+        let mut layout = Layout::default();
+        let id = layout
+            .add("Academy", TilePos { x: 0, y: 0 }, Rotation::Zero)
+            .expect("unwrap");
+        let placed = layout.get(id).cloned().expect("unwrap");
+        let mut h = LayoutHistory::default();
+        h.exec(Command::Remove { placed }, &mut layout);
+        assert!(h.undo(&mut layout));
+        assert!(
+            layout.next_instance_id
+                > layout
+                    .buildings
+                    .iter()
+                    .map(|b| b.instance_id)
+                    .max()
+                    .unwrap_or(0)
+        );
+        assert!(h.redo(&mut layout));
+        assert!(
+            layout.next_instance_id
+                > layout
+                    .buildings
+                    .iter()
+                    .map(|b| b.instance_id)
+                    .max()
+                    .unwrap_or(0)
+        );
     }
 
     #[test]

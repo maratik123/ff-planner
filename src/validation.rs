@@ -29,40 +29,53 @@ pub struct Issue {
     pub detail: String,
 }
 
-pub fn validate_layout(layout: &Layout) -> Vec<Issue> {
-    let mut issues = Vec::new();
-    let identifiers: HashSet<String> = layout
-        .buildings
-        .iter()
-        .map(|b| b.building_identifier.clone())
-        .collect();
-
+fn overlap_issues(layout: &Layout) -> Vec<Issue> {
     let mut seen_cells: HashMap<TilePos, u64> = HashMap::new();
+    let mut overlap_cells: HashMap<(u64, u64), Vec<TilePos>> = HashMap::new();
     for b in &layout.buildings {
         if !all().contains_key(&b.building_identifier) {
-            issues.push(Issue {
-                kind: IssueKind::UnknownBuilding,
-                instance_id: b.instance_id,
-                detail: b.building_identifier.clone(),
-            });
             continue;
         }
         for cell in layout.occupied_cells(b) {
             if let Some(other_id) = seen_cells.get(&cell) {
-                issues.push(Issue {
-                    kind: IssueKind::Overlap,
-                    instance_id: b.instance_id,
-                    detail: format!(
-                        "cell ({}, {}) also used by instance {}",
-                        cell.x, cell.y, other_id
-                    ),
-                });
-                break; // one overlap issue per building is enough
+                if *other_id != b.instance_id {
+                    overlap_cells
+                        .entry((b.instance_id, *other_id))
+                        .or_default()
+                        .push(cell);
+                }
+            } else {
+                seen_cells.insert(cell, b.instance_id);
             }
-            seen_cells.insert(cell, b.instance_id);
         }
     }
+    let mut overlap_pairs: Vec<(u64, u64, Vec<TilePos>)> = overlap_cells
+        .into_iter()
+        .map(|((id, other), mut cells)| {
+            cells.sort_by_key(|c| (c.y, c.x));
+            (id, other, cells)
+        })
+        .collect();
+    overlap_pairs.sort_by_key(|(id, other, _)| (*id, *other));
+    overlap_pairs
+        .into_iter()
+        .map(|(id, other, cells)| {
+            let cell_list = cells
+                .iter()
+                .map(|c| format!("({}, {})", c.x, c.y))
+                .collect::<Vec<_>>()
+                .join(", ");
+            Issue {
+                kind: IssueKind::Overlap,
+                instance_id: id,
+                detail: format!("cells {cell_list} also used by instance {other}"),
+            }
+        })
+        .collect()
+}
 
+fn prereq_issues(layout: &Layout, identifiers: &HashSet<String>) -> Vec<Issue> {
+    let mut issues = Vec::new();
     for b in &layout.buildings {
         let Some(def) = all().get(&b.building_identifier) else {
             continue;
@@ -78,7 +91,7 @@ pub fn validate_layout(layout: &Layout) -> Vec<Issue> {
             if !has_known {
                 continue;
             }
-            if !prereq.is_satisfied(&identifiers) {
+            if !prereq.is_satisfied(identifiers) {
                 issues.push(Issue {
                     kind: IssueKind::WithoutPrerequisite,
                     instance_id: b.instance_id,
@@ -87,7 +100,10 @@ pub fn validate_layout(layout: &Layout) -> Vec<Issue> {
             }
         }
     }
+    issues
+}
 
+fn max_issues(layout: &Layout) -> Vec<Issue> {
     let mut counts: HashMap<&str, Vec<u64>> = HashMap::new();
     for b in &layout.buildings {
         if let Some(def) = all().get(&b.building_identifier)
@@ -101,14 +117,20 @@ pub fn validate_layout(layout: &Layout) -> Vec<Issue> {
     }
     let mut counts_list: Vec<(&str, &Vec<u64>)> = counts.iter().map(|(k, v)| (*k, v)).collect();
     counts_list.sort_by_key(|(k, _)| *k);
+    let mut issues = Vec::new();
     for (identifier, ids) in counts_list {
         let Some(def) = all().get(identifier) else {
             continue;
         };
         let max = def.max_allowed;
-        // Sort deterministically by instance id; overflow instances are the tail.
+        // Sort by position (not instance id) so the flagged set does not depend
+        // on creation order; overflow instances are the tail.
         let mut ids = ids.clone();
-        ids.sort_unstable();
+        ids.sort_by_key(|id| {
+            let b = layout.get(*id);
+            b.map(|b| (b.pos.y, b.pos.x, b.instance_id))
+                .unwrap_or((i32::MAX, i32::MAX, *id))
+        });
         for instance_id in ids.into_iter().skip(max as usize) {
             issues.push(Issue {
                 kind: IssueKind::ExceedsMax,
@@ -117,7 +139,29 @@ pub fn validate_layout(layout: &Layout) -> Vec<Issue> {
             });
         }
     }
+    issues
+}
 
+pub fn validate_layout(layout: &Layout) -> Vec<Issue> {
+    let mut issues = Vec::new();
+    let identifiers: HashSet<String> = layout
+        .buildings
+        .iter()
+        .map(|b| b.building_identifier.clone())
+        .collect();
+
+    for b in &layout.buildings {
+        if !all().contains_key(&b.building_identifier) {
+            issues.push(Issue {
+                kind: IssueKind::UnknownBuilding,
+                instance_id: b.instance_id,
+                detail: b.building_identifier.clone(),
+            });
+        }
+    }
+    issues.extend(overlap_issues(layout));
+    issues.extend(prereq_issues(layout, &identifiers));
+    issues.extend(max_issues(layout));
     issues
 }
 
@@ -262,6 +306,73 @@ mod tests {
         layout.next_instance_id = 1;
         let issues = layout.validate();
         assert!(issues.iter().any(|i| i.kind == IssueKind::UnknownBuilding));
+    }
+
+    #[test]
+    fn overlap_issue_lists_all_colliding_cells() {
+        let mut layout = Layout::default();
+        add(&mut layout, "Academy", 0, 0);
+        let id = {
+            layout.buildings.push(PlacedBuilding {
+                instance_id: layout.next_instance_id,
+                building_identifier: "School".to_owned(),
+                pos: TilePos { x: 4, y: 0 },
+                rotation: Rotation::Zero,
+            });
+            layout.next_instance_id += 1;
+            layout.buildings.last().expect("pushed").instance_id
+        };
+        let issues = layout.validate();
+        let overlaps: Vec<_> = issues
+            .iter()
+            .filter(|i| i.kind == IssueKind::Overlap && i.instance_id == id)
+            .collect();
+        assert_eq!(overlaps.len(), 1);
+        assert!(overlaps[0].detail.contains("(4, 0)"));
+        assert!(overlaps[0].detail.contains("(4, 1)"));
+        assert!(overlaps[0].detail.contains("(4, 2)"));
+    }
+
+    #[test]
+    fn exceeds_max_flagged_positions_independent_of_creation_order() {
+        let mut layout_a = Layout::default();
+        add(&mut layout_a, "TownCenter", 0, 0);
+        layout_a.buildings.push(PlacedBuilding {
+            instance_id: layout_a.next_instance_id,
+            building_identifier: "TownCenter".to_owned(),
+            pos: TilePos { x: 100, y: 0 },
+            rotation: Rotation::Zero,
+        });
+        layout_a.next_instance_id += 1;
+
+        let mut layout_b = Layout::default();
+        layout_b.buildings.push(PlacedBuilding {
+            instance_id: 0,
+            building_identifier: "TownCenter".to_owned(),
+            pos: TilePos { x: 100, y: 0 },
+            rotation: Rotation::Zero,
+        });
+        layout_b.next_instance_id = 1;
+        layout_b.buildings.push(PlacedBuilding {
+            instance_id: 1,
+            building_identifier: "TownCenter".to_owned(),
+            pos: TilePos { x: 0, y: 0 },
+            rotation: Rotation::Zero,
+        });
+        layout_b.next_instance_id = 2;
+
+        let flagged = |l: &Layout| {
+            let mut v: Vec<TilePos> = l
+                .validate()
+                .into_iter()
+                .filter(|i| i.kind == IssueKind::ExceedsMax)
+                .map(|i| l.get(i.instance_id).expect("flagged building").pos)
+                .collect();
+            v.sort_by_key(|p| (p.y, p.x));
+            v
+        };
+        assert_eq!(flagged(&layout_a), flagged(&layout_b));
+        assert_eq!(flagged(&layout_a), vec![TilePos { x: 100, y: 0 }]);
     }
 
     #[test]
