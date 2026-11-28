@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::buildings::all;
+use crate::buildings::{Prerequisite, all};
 use crate::placement::{Layout, TilePos};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,11 +27,6 @@ pub struct Issue {
     pub kind: IssueKind,
     pub instance_id: u64,
     pub detail: String,
-}
-
-fn prerequisite_satisfied(prereq: &str, identifiers: &HashSet<String>) -> bool {
-    // '|' separates alternative identifiers within one prerequisite entry.
-    prereq.split('|').any(|alt| identifiers.contains(alt))
 }
 
 pub fn validate_layout(layout: &Layout) -> Vec<Issue> {
@@ -72,14 +67,22 @@ pub fn validate_layout(layout: &Layout) -> Vec<Issue> {
         let Some(def) = all().get(&b.building_identifier) else {
             continue;
         };
-        let mut prereqs: Vec<&String> = def.prerequisites.iter().collect();
-        prereqs.sort();
+        let mut prereqs: Vec<&Prerequisite> = def.prerequisites.iter().collect();
+        prereqs.sort_by_key(|p| p.label());
         for prereq in prereqs {
-            if !prerequisite_satisfied(prereq, &identifiers) {
+            // Skip prereqs with no known building identifiers (e.g. Tech_NNN entries).
+            let has_known = prereq
+                .alternatives()
+                .iter()
+                .any(|alt| all().contains_key(alt));
+            if !has_known {
+                continue;
+            }
+            if !prereq.is_satisfied(&identifiers) {
                 issues.push(Issue {
                     kind: IssueKind::WithoutPrerequisite,
                     instance_id: b.instance_id,
-                    detail: format!("requires {}", prereq.replace('|', " or ")),
+                    detail: format!("requires {}", prereq.label()),
                 });
             }
         }
@@ -195,21 +198,36 @@ mod tests {
     #[test]
     fn or_prerequisite_satisfied_by_either() {
         let mut layout = Layout::default();
-        // Cheesemaker requires (Barn|GoatBarn) AND Tech_085. Only Barn exists in the dump,
-        // so the (Barn|GoatBarn) prereq is satisfied while Tech_085 stays missing.
+        // Cheesemaker requires (Barn|GoatBarn) AND Tech_085. Barn exists in the dump;
+        // GoatBarn and Tech_085 do not, so only the Barn alternative is checkable
+        // and Tech_085 is skipped entirely.
         add(&mut layout, "Barn", 0, 0);
         let id = add(&mut layout, "Cheesemaker", 60, 0);
         let issues = layout.validate();
-        assert!(
-            !issues
-                .iter()
-                .any(|i| i.instance_id == id && i.detail.contains("Barn"))
-        );
-        assert!(
-            issues
-                .iter()
-                .any(|i| i.instance_id == id && i.detail.contains("Tech_085"))
-        );
+        assert!(!issues.iter().any(|i| i.instance_id == id));
+    }
+
+    #[test]
+    fn unknown_prerequisite_alternatives_are_skipped() {
+        let mut layout = Layout::default();
+        // BookBinder's only prerequisite, Tech_090, is absent from the dump: no issue.
+        let id = add(&mut layout, "BookBinder", 0, 0);
+        let issues = layout.validate();
+        assert!(!issues.iter().any(|i| i.instance_id == id));
+    }
+
+    #[test]
+    fn or_prerequisite_unsatisfied_when_barn_and_goat_barn_absent() {
+        // GoatBarn is also absent from the dump; Barn alone is the only known alternative.
+        let mut layout = Layout::default();
+        let id = add(&mut layout, "Cheesemaker", 60, 0);
+        let issues = layout.validate();
+        let missing: Vec<_> = issues
+            .iter()
+            .filter(|i| i.kind == IssueKind::WithoutPrerequisite && i.instance_id == id)
+            .collect();
+        assert_eq!(missing.len(), 1);
+        assert!(missing[0].detail.contains("Barn"));
     }
 
     #[test]

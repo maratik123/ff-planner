@@ -71,6 +71,42 @@ pub enum BuildsiteClearingMode {
     NoClear,
 }
 
+/// One prerequisite entry: one or more alternative identifiers (OR).
+/// A single-element set is the Single case.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Prerequisite {
+    alternatives: Vec<String>,
+}
+
+impl Prerequisite {
+    pub fn from_alternated(s: &str) -> Self {
+        let mut alternatives: Vec<String> = s
+            .split('|')
+            .filter(|alt| !alt.is_empty())
+            .map(str::to_owned)
+            .collect();
+        alternatives.sort();
+        alternatives.dedup();
+        Self { alternatives }
+    }
+
+    /// True if any alternative is present in the provided identifier set.
+    pub fn is_satisfied(&self, identifiers: &HashSet<String>) -> bool {
+        self.alternatives
+            .iter()
+            .any(|alt| identifiers.contains(alt))
+    }
+
+    /// Humans-readable form, e.g. "`Barn` or `GoatBarn`".
+    pub fn label(&self) -> String {
+        self.alternatives.join(" or ")
+    }
+
+    pub fn alternatives(&self) -> &[String] {
+        &self.alternatives
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
 pub enum PlaceableGridType {
     #[serde(rename = "StrategicPlanning")]
@@ -123,7 +159,7 @@ pub struct Building {
     pub highlight_similar_buildings_on_select: bool,
     pub materials_list_dirty: bool,
     pub grid: Rect,
-    pub prerequisites: HashSet<String>,
+    pub prerequisites: HashSet<Prerequisite>,
     pub materials: HashMap<String, u32>,
     pub materials_after_construction: HashMap<String, u32>,
     pub lower_tier_identifiers: HashSet<String>,
@@ -155,7 +191,7 @@ struct RawBuilding {
     grid_w: f32,
     grid_h: f32,
     #[serde(default)]
-    prerequisites: HashSet<String>,
+    prerequisites: Vec<String>,
     materials: HashMap<String, u32>,
     #[serde(default)]
     materials_after_construction: HashMap<String, u32>,
@@ -186,7 +222,11 @@ impl From<RawBuilding> for Building {
             highlight_similar_buildings_on_select: raw.highlight_similar_buildings_on_select,
             materials_list_dirty: raw.materials_list_dirty,
             grid: Rect::from_floats(raw.grid_w, raw.grid_h),
-            prerequisites: raw.prerequisites,
+            prerequisites: raw
+                .prerequisites
+                .into_iter()
+                .map(|s| Prerequisite::from_alternated(&s))
+                .collect(),
             materials: raw.materials,
             materials_after_construction: raw.materials_after_construction,
             lower_tier_identifiers: raw.lower_tier_identifiers,
@@ -293,7 +333,7 @@ mod tests {
             }
         );
         assert_eq!(building.materials.get("ItemPlanks"), Some(&50));
-        assert!(building.prerequisites.contains("School"));
+        assert!(building.prerequisites.iter().any(|p| p.label() == "School"));
     }
 
     #[test]
