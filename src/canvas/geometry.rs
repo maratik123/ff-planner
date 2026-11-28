@@ -127,6 +127,7 @@ pub(crate) fn should_apply_drag(drag: &DragState) -> bool {
 pub(crate) fn valid_drag(layout: &Layout, drag: &DragState) -> bool {
     let ignore: std::collections::HashSet<u64> =
         drag.entries.iter().map(|e| e.instance_id).collect();
+    let cache = crate::placement::OccupiedCells::new(layout);
     let mut occupied: std::collections::HashSet<TilePos> = std::collections::HashSet::new();
     for e in &drag.entries {
         let Some(b) = layout.get(e.instance_id) else {
@@ -134,7 +135,7 @@ pub(crate) fn valid_drag(layout: &Layout, drag: &DragState) -> bool {
         };
         let pos = drag.current_pos(e);
         let rotation = drag.current_rotation(e);
-        if !layout.can_place_ignoring(&b.building_identifier, pos, rotation, &ignore) {
+        if !cache.can_place_ignoring(&b.building_identifier, pos, rotation, &ignore) {
             return false;
         }
         let dims = rotation.dimensions(all()[&b.building_identifier].grid);

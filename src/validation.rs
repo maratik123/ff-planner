@@ -30,13 +30,14 @@ pub struct Issue {
 }
 
 fn overlap_issues(layout: &Layout) -> Vec<Issue> {
+    let cache = crate::placement::OccupiedCells::new(layout);
     let mut seen_cells: HashMap<TilePos, u64> = HashMap::new();
     let mut overlap_cells: HashMap<(u64, u64), Vec<TilePos>> = HashMap::new();
     for b in &layout.buildings {
         if !all().contains_key(&b.building_identifier) {
             continue;
         }
-        for cell in layout.occupied_cells(b) {
+        for cell in cache.occupied_cells(b).iter().copied() {
             if let Some(other_id) = seen_cells.get(&cell) {
                 if *other_id != b.instance_id {
                     overlap_cells

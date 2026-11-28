@@ -23,20 +23,21 @@ pub(crate) fn extend_selection_range(layout: &Layout, selected: &mut Vec<u64>, i
         }
         return;
     };
-    let order: Vec<u64> = layout.buildings.iter().map(|b| b.instance_id).collect();
-    let (Some(a), Some(b)) = (
-        order.iter().position(|x| *x == anchor),
-        order.iter().position(|x| *x == id),
-    ) else {
+    let a = layout
+        .buildings
+        .iter()
+        .position(|b| b.instance_id == anchor);
+    let b = layout.buildings.iter().position(|b| b.instance_id == id);
+    let (Some(a), Some(b)) = (a, b) else {
         if !selected.contains(&id) {
             selected.push(id);
         }
         return;
     };
     let (lo, hi) = (a.min(b), a.max(b));
-    for id in order.iter().take(hi + 1).skip(lo) {
-        if !selected.contains(id) {
-            selected.push(*id);
+    for building in &layout.buildings[lo..=hi] {
+        if !selected.contains(&building.instance_id) {
+            selected.push(building.instance_id);
         }
     }
 }
@@ -68,11 +69,12 @@ pub(crate) fn batch_delete(layout: &Layout, ids: &[u64]) -> Option<Command> {
 /// overlap another building or another selected building).
 pub(crate) fn batch_rotate(layout: &Layout, ids: &[u64]) -> Option<Command> {
     let ignore: HashSet<u64> = ids.iter().copied().collect();
+    let cache = crate::placement::OccupiedCells::new(layout);
     let mut cmds = Vec::new();
     for id in ids {
         let b = layout.get(*id)?;
         let new = b.rotation.next();
-        if !layout.can_place_ignoring(&b.building_identifier, b.pos, new, &ignore) {
+        if !cache.can_place_ignoring(&b.building_identifier, b.pos, new, &ignore) {
             return None;
         }
         cmds.push(Command::Rotate {
@@ -129,6 +131,24 @@ mod tests {
         assert!(sel.contains(&b));
     }
 
+    #[test]
+    fn extend_range_selects_non_adjacent_range() {
+        let mut layout = Layout::default();
+        let a = layout
+            .add("Academy", TilePos { x: 0, y: 0 }, Rotation::Zero)
+            .expect("a");
+        let b = layout
+            .add("Academy", TilePos { x: 10, y: 0 }, Rotation::Zero)
+            .expect("b");
+        let c = layout
+            .add("Academy", TilePos { x: 20, y: 0 }, Rotation::Zero)
+            .expect("c");
+        let mut sel = vec![a];
+        extend_selection_range(&layout, &mut sel, c);
+        assert!(sel.contains(&a));
+        assert!(sel.contains(&b));
+        assert!(sel.contains(&c));
+    }
     #[test]
     fn prune_removes_stale_and_duplicates() {
         let (layout, a, _) = add_two();
