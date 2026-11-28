@@ -16,7 +16,7 @@ impl TemplateApp {
                 let btn = egui::Button::new(label).selected(is_selected);
                 if ui.add(btn).clicked() {
                     self.palette_selection = if is_selected { None } else { Some(id.clone()) };
-                    self.selected = None;
+                    self.selected.clear();
                 }
             }
         });

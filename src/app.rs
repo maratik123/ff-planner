@@ -1,15 +1,36 @@
 use egui::Vec2;
+use serde::Deserialize;
 
 use crate::canvas::DragState;
 use crate::history::LayoutHistory;
 use crate::placement::Layout;
+use crate::selection;
 
 /// Current schema version of the persisted app state.
-pub(crate) const CURRENT_SCHEMA_VERSION: u32 = 1;
+pub(crate) const CURRENT_SCHEMA_VERSION: u32 = 2;
 
 /// Saves written before versioning existed deserialize as this; `migrate` lifts them.
 fn legacy_schema_version() -> u32 {
     0
+}
+
+/// Deserialize a legacy save's `selected` field: a number, `null`, or (v2) an array.
+fn deserialize_selected<'de, D>(deserializer: D) -> Result<Vec<u64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Repr {
+        None_,
+        One(u64),
+        Many(Vec<u64>),
+    }
+    Ok(match Repr::deserialize(deserializer)? {
+        Repr::None_ => Vec::new(),
+        Repr::One(id) => vec![id],
+        Repr::Many(ids) => ids,
+    })
 }
 
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
@@ -20,7 +41,8 @@ pub struct TemplateApp {
     #[serde(default = "legacy_schema_version")]
     pub(crate) schema_version: u32,
     pub(crate) layout: Layout,
-    pub(crate) selected: Option<u64>,
+    #[serde(default, deserialize_with = "deserialize_selected")]
+    pub(crate) selected: Vec<u64>,
     pub(crate) palette_selection: Option<String>,
     pub(crate) pan: Vec2,
     pub(crate) zoom: f32,
@@ -35,7 +57,7 @@ impl Default for TemplateApp {
         Self {
             schema_version: CURRENT_SCHEMA_VERSION,
             layout: Layout::default(),
-            selected: None,
+            selected: Vec::new(),
             palette_selection: None,
             pan: Vec2::ZERO,
             zoom: 1.0,
@@ -60,28 +82,24 @@ impl TemplateApp {
         if !self.history.undo(&mut self.layout) {
             return;
         }
-        if let Some(id) = self.selected
-            && self.layout.get(id).is_none()
-        {
-            self.selected = None;
-        }
+        selection::prune_selection(&self.layout, &mut self.selected);
     }
 
     fn redo(&mut self) {
         if !self.history.redo(&mut self.layout) {
             return;
         }
-        if let Some(id) = self.selected
-            && self.layout.get(id).is_none()
-        {
-            self.selected = None;
-        }
+        selection::prune_selection(&self.layout, &mut self.selected);
     }
 
     fn status_bar(&self, ui: &mut egui::Ui) {
         let issues = self.layout.validate();
         ui.horizontal(|ui| {
             ui.label(format!("Buildings: {}", self.layout.buildings.len()));
+            if !self.selected.is_empty() {
+                ui.separator();
+                ui.label(format!("Selected: {}", self.selected.len()));
+            }
             ui.separator();
             if issues.is_empty() {
                 ui.label("No validation issues");
@@ -102,10 +120,19 @@ impl TemplateApp {
         let mods = ui.input(|i| i.modifiers);
         let z = ui.input(|i| i.key_pressed(egui::Key::Z));
         let y = ui.input(|i| i.key_pressed(egui::Key::Y));
+        let delete = ui.input(|i| i.key_pressed(egui::Key::Delete));
+        let backspace = ui.input(|i| i.key_pressed(egui::Key::Backspace));
         if mods.command && z && mods.shift {
             self.redo();
         } else if mods.command && (z || y) {
             self.undo();
+        } else if (delete || backspace)
+            && self.drag.is_none()
+            && !self.selected.is_empty()
+            && let Some(cmd) = selection::batch_delete(&self.layout, &self.selected)
+        {
+            self.history.exec(cmd, &mut self.layout);
+            self.selected.clear();
         }
     }
 
@@ -114,7 +141,9 @@ impl TemplateApp {
         if self.schema_version >= CURRENT_SCHEMA_VERSION {
             return false;
         }
-        // No field changes yet; this is the hook for future migrations.
+        // v1 -> v2: `selected` was Option<u64>; the custom deserializer turned
+        // it into a Vec (empty, one-element, or already a list). Nothing else to lift.
+        selection::prune_selection(&self.layout, &mut self.selected);
         self.schema_version = CURRENT_SCHEMA_VERSION;
         true
     }
@@ -166,10 +195,29 @@ mod tests {
 
     #[test]
     fn current_version_is_not_migrated() {
-        let json = r#"{"schema_version":1,"zoom":1.5}"#;
+        let json = r#"{"schema_version":2,"zoom":1.5}"#;
         let mut app: TemplateApp = serde_json::from_str(json).expect("parse save");
         assert!(!app.migrate());
         assert_eq!(app.schema_version, CURRENT_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn legacy_save_with_single_selected_lifts_to_vec() {
+        let json =
+            r#"{"schema_version":1,"layout":{"buildings":[],"next_instance_id":1},"selected":7}"#;
+        let mut app: TemplateApp = serde_json::from_str(json).expect("parse save");
+        assert_eq!(app.selected, vec![7]);
+        assert!(app.migrate());
+        assert_eq!(app.schema_version, CURRENT_SCHEMA_VERSION);
+        assert!(app.selected.is_empty(), "selection should be empty");
+    }
+
+    #[test]
+    fn legacy_save_with_null_selected_lifts_to_empty() {
+        let json = r#"{"schema_version":1,"layout":{"buildings":[],"next_instance_id":1},"selected":null}"#;
+        let mut app: TemplateApp = serde_json::from_str(json).expect("parse save");
+        assert!(app.selected.is_empty(), "selection should be empty");
+        assert!(app.migrate());
     }
 
     #[test]

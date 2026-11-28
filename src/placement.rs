@@ -18,6 +18,15 @@ pub enum Rotation {
 }
 
 impl Rotation {
+    pub fn next(self) -> Self {
+        match self {
+            Self::Zero => Self::R90,
+            Self::R90 => Self::R180,
+            Self::R180 => Self::R270,
+            Self::R270 => Self::Zero,
+        }
+    }
+
     pub fn dimensions(self, grid: Rect) -> Rect {
         match self {
             Self::Zero | Self::R180 => grid,
@@ -67,6 +76,17 @@ impl Layout {
         rotation: Rotation,
         ignore_instance_id: Option<u64>,
     ) -> bool {
+        let ignore: std::collections::HashSet<u64> = ignore_instance_id.into_iter().collect();
+        self.can_place_ignoring(building_identifier, pos, rotation, &ignore)
+    }
+
+    pub fn can_place_ignoring(
+        &self,
+        building_identifier: &str,
+        pos: TilePos,
+        rotation: Rotation,
+        ignore: &std::collections::HashSet<u64>,
+    ) -> bool {
         let Some(def) = all().get(building_identifier) else {
             return false;
         };
@@ -85,7 +105,7 @@ impl Layout {
         let occupied: std::collections::HashSet<TilePos> = self
             .buildings
             .iter()
-            .filter(|b| ignore_instance_id != Some(b.instance_id))
+            .filter(|b| !ignore.contains(&b.instance_id))
             .flat_map(|b| self.occupied_cells(b))
             .collect();
         candidate_cells.iter().all(|c| !occupied.contains(c))

@@ -9,15 +9,37 @@ use crate::placement::{PlacedBuilding, Rotation, TilePos};
 const CELL_PX: f32 = 16.0;
 const DRAG_THRESHOLD_PX: f32 = 5.0;
 
-/// Transient state for an in-progress drag of an existing building.
-pub(crate) struct DragState {
+/// One building captured at the start of a drag.
+pub(crate) struct DragEntry {
     pub(crate) instance_id: u64,
-    pub(crate) start_pointer: Pos2,
     pub(crate) orig_pos: TilePos,
     pub(crate) orig_rotation: Rotation,
-    pub(crate) current_pos: TilePos,
-    pub(crate) current_rotation: Rotation,
+}
+
+/// Transient state for an in-progress drag of a selection of buildings.
+pub(crate) struct DragState {
+    pub(crate) start_pointer: Pos2,
+    pub(crate) entries: Vec<DragEntry>,
+    pub(crate) delta: TilePos,
+    pub(crate) rotation_steps: u8,
     pub(crate) moved: bool,
+}
+
+impl DragState {
+    pub(crate) fn current_rotation(&self, entry: &DragEntry) -> Rotation {
+        let mut r = entry.orig_rotation;
+        for _ in 0..self.rotation_steps {
+            r = r.next();
+        }
+        r
+    }
+
+    pub(crate) fn current_pos(&self, entry: &DragEntry) -> TilePos {
+        TilePos {
+            x: entry.orig_pos.x + self.delta.x,
+            y: entry.orig_pos.y + self.delta.y,
+        }
+    }
 }
 
 /// Destination tile for a drag: the original position shifted by the pointer delta.
@@ -29,17 +51,53 @@ fn drag_target_pos(orig_pos: TilePos, delta_px: Vec2, cell: f32) -> TilePos {
     }
 }
 
+fn drag_delta(delta_px: Vec2, cell: f32) -> TilePos {
+    drag_target_pos(TilePos { x: 0, y: 0 }, delta_px, cell)
+}
+
 fn rotation_changed(drag: &DragState) -> bool {
-    drag.current_rotation != drag.orig_rotation
+    drag.rotation_steps != 0
 }
 
 fn position_changed(drag: &DragState) -> bool {
-    drag.current_pos != drag.orig_pos
+    drag.delta != TilePos { x: 0, y: 0 }
 }
 
-/// Whether a finished drag should be committed as a single Move command.
+/// Whether a finished drag should be committed as a single Batch command.
 fn should_apply_drag(drag: &DragState) -> bool {
     drag.moved && (position_changed(drag) || rotation_changed(drag))
+}
+
+/// Whether every entry in a drag would be valid at its target (ignoring all
+/// selected buildings, then checking they don't collide with each other).
+fn valid_drag(layout: &crate::placement::Layout, drag: &DragState) -> bool {
+    let ignore: std::collections::HashSet<u64> =
+        drag.entries.iter().map(|e| e.instance_id).collect();
+    let mut occupied: std::collections::HashSet<crate::placement::TilePos> =
+        std::collections::HashSet::new();
+    for e in &drag.entries {
+        let Some(b) = layout.get(e.instance_id) else {
+            return false;
+        };
+        let pos = drag.current_pos(e);
+        let rotation = drag.current_rotation(e);
+        if !layout.can_place_ignoring(&b.building_identifier, pos, rotation, &ignore) {
+            return false;
+        }
+        let dims = rotation.dimensions(all()[&b.building_identifier].grid);
+        for dy in 0..dims.height {
+            for dx in 0..dims.width {
+                let c = TilePos {
+                    x: pos.x + dx.cast_signed(),
+                    y: pos.y + dy.cast_signed(),
+                };
+                if !occupied.insert(c) {
+                    return false;
+                }
+            }
+        }
+    }
+    true
 }
 
 /// The undoable command for a finished drag, or `None` if the drop should be cancelled.
@@ -47,22 +105,29 @@ fn pending_move(layout: &crate::placement::Layout, drag: &DragState) -> Option<C
     if !should_apply_drag(drag) {
         return None;
     }
-    let b = layout.get(drag.instance_id)?;
-    if !layout.can_place(
-        &b.building_identifier,
-        drag.current_pos,
-        drag.current_rotation,
-        Some(drag.instance_id),
-    ) {
+    if !valid_drag(layout, drag) {
         return None;
     }
-    Some(Command::Move {
-        instance_id: drag.instance_id,
-        from: drag.orig_pos,
-        to: drag.current_pos,
-        from_rotation: drag.orig_rotation,
-        to_rotation: drag.current_rotation,
-    })
+    let mut cmds = Vec::new();
+    for e in &drag.entries {
+        layout.get(e.instance_id)?;
+        let to = drag.current_pos(e);
+        let to_rot = drag.current_rotation(e);
+        if to != e.orig_pos || to_rot != e.orig_rotation {
+            cmds.push(Command::Move {
+                instance_id: e.instance_id,
+                from: e.orig_pos,
+                to,
+                from_rotation: e.orig_rotation,
+                to_rotation: to_rot,
+            });
+        }
+    }
+    if cmds.is_empty() {
+        None
+    } else {
+        Some(Command::Batch(cmds))
+    }
 }
 
 impl TemplateApp {
@@ -101,15 +166,6 @@ impl TemplateApp {
         )
     }
 
-    fn rotate_step(rotation: Rotation) -> Rotation {
-        match rotation {
-            Rotation::Zero => Rotation::R90,
-            Rotation::R90 => Rotation::R180,
-            Rotation::R180 => Rotation::R270,
-            Rotation::R270 => Rotation::Zero,
-        }
-    }
-
     fn paint_grid(&self, painter: &egui::Painter, rect: egui::Rect) {
         let o = self.origin(rect);
         let cell = self.cell_size();
@@ -146,14 +202,13 @@ impl TemplateApp {
             let dims = b.rotation.dimensions(def.grid);
             let br = self.building_rect(rect, b, dims);
             let mut color = category_color(def.category);
-            let is_dragged = self
-                .drag
-                .as_ref()
-                .is_some_and(|d| d.instance_id == b.instance_id && d.moved);
+            let is_dragged = self.drag.as_ref().is_some_and(|d| {
+                d.moved && d.entries.iter().any(|e| e.instance_id == b.instance_id)
+            });
             if is_dragged {
                 color = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 0x55);
             }
-            let selected = self.selected == Some(b.instance_id);
+            let selected = self.selected.contains(&b.instance_id);
             painter.rect_filled(br, CornerRadius::ZERO, color);
             painter.rect_stroke(
                 br,
@@ -198,27 +253,7 @@ impl TemplateApp {
         if !drag.moved {
             return;
         }
-        let Some(b) = self.layout.get(drag.instance_id) else {
-            return;
-        };
-        let Some(def) = all().get(&b.building_identifier) else {
-            return;
-        };
-        let valid = self.layout.can_place(
-            &b.building_identifier,
-            drag.current_pos,
-            drag.current_rotation,
-            Some(drag.instance_id),
-        );
-        let dims = drag.current_rotation.dimensions(def.grid);
-        let p = self.grid_to_screen(rect, drag.current_pos);
-        let br = egui::Rect::from_min_size(
-            p,
-            vec2(
-                dims.width as f32 * self.cell_size(),
-                dims.height as f32 * self.cell_size(),
-            ),
-        );
+        let valid = valid_drag(&self.layout, drag);
         let color = if valid {
             Color32::from_rgba_unmultiplied(0x40, 0xd0, 0x40, 0x66)
         } else {
@@ -229,13 +264,32 @@ impl TemplateApp {
         } else {
             Color32::from_rgb(0xe0, 0x40, 0x40)
         };
-        painter.rect_filled(br, CornerRadius::ZERO, color);
-        painter.rect_stroke(
-            br,
-            CornerRadius::ZERO,
-            Stroke::new(2.0, stroke),
-            egui::StrokeKind::Inside,
-        );
+        for e in &drag.entries {
+            let Some(b) = self.layout.get(e.instance_id) else {
+                continue;
+            };
+            let Some(def) = all().get(&b.building_identifier) else {
+                continue;
+            };
+            let rotation = drag.current_rotation(e);
+            let dims = rotation.dimensions(def.grid);
+            let pos = drag.current_pos(e);
+            let p = self.grid_to_screen(rect, pos);
+            let br = egui::Rect::from_min_size(
+                p,
+                vec2(
+                    dims.width as f32 * self.cell_size(),
+                    dims.height as f32 * self.cell_size(),
+                ),
+            );
+            painter.rect_filled(br, CornerRadius::ZERO, color);
+            painter.rect_stroke(
+                br,
+                CornerRadius::ZERO,
+                Stroke::new(2.0, stroke),
+                egui::StrokeKind::Inside,
+            );
+        }
     }
 
     fn zoom_at_cursor(&mut self, rect: egui::Rect, cursor: Pos2, wheel: f32) {
@@ -252,24 +306,13 @@ impl TemplateApp {
     }
 
     fn rotate_selected(&mut self) {
-        let Some(id) = self.selected else { return };
-        let Some(b) = self.layout.get(id).cloned() else {
+        if self.selected.is_empty() {
+            return;
+        }
+        let Some(cmd) = crate::selection::batch_rotate(&self.layout, &self.selected) else {
             return;
         };
-        let new = Self::rotate_step(b.rotation);
-        if self
-            .layout
-            .can_place(&b.building_identifier, b.pos, new, Some(b.instance_id))
-        {
-            self.history.exec(
-                Command::Rotate {
-                    instance_id: id,
-                    from: b.rotation,
-                    to: new,
-                },
-                &mut self.layout,
-            );
-        }
+        self.history.exec(cmd, &mut self.layout);
     }
 
     fn place_at_click(&mut self, rect: egui::Rect, click: Pos2) {
@@ -289,14 +332,14 @@ impl TemplateApp {
                 pos: place,
                 rotation: Rotation::Zero,
             };
-            self.selected = Some(placed.instance_id);
+            self.selected = vec![placed.instance_id];
             self.history.exec(Command::Add { placed }, &mut self.layout);
         } else {
-            self.selected = None;
+            self.selected.clear();
         }
     }
 
-    fn handle_click(&mut self, rect: egui::Rect, click: Pos2) {
+    fn handle_click(&mut self, ui: &egui::Ui, rect: egui::Rect, click: Pos2) {
         let mut hit: Option<u64> = None;
         for b in self.layout.buildings.iter().rev() {
             let Some(def) = all().get(&b.building_identifier) else {
@@ -309,13 +352,20 @@ impl TemplateApp {
                 break;
             }
         }
+        let modifiers = ui.input(|i| i.modifiers);
         if let Some(id) = hit {
-            self.selected = Some(id);
+            if modifiers.command {
+                crate::selection::toggle_selection(&mut self.selected, id);
+            } else if modifiers.shift {
+                crate::selection::extend_selection_range(&self.layout, &mut self.selected, id);
+            } else {
+                self.selected = vec![id];
+            }
             self.palette_selection = None;
         } else if self.palette_selection.is_some() {
             self.place_at_click(rect, click);
         } else {
-            self.selected = None;
+            self.selected.clear();
         }
     }
 
@@ -323,16 +373,28 @@ impl TemplateApp {
         let Some(id) = self.hit_building(rect, pointer) else {
             return;
         };
-        let Some(b) = self.layout.get(id).cloned() else {
+        if !self.selected.contains(&id) {
+            self.selected = vec![id];
+        }
+        let entries: Vec<DragEntry> = self
+            .selected
+            .iter()
+            .filter_map(|&sid| {
+                self.layout.get(sid).cloned().map(|b| DragEntry {
+                    instance_id: sid,
+                    orig_pos: b.pos,
+                    orig_rotation: b.rotation,
+                })
+            })
+            .collect();
+        if entries.is_empty() {
             return;
-        };
+        }
         self.drag = Some(DragState {
-            instance_id: id,
             start_pointer: pointer,
-            orig_pos: b.pos,
-            orig_rotation: b.rotation,
-            current_pos: b.pos,
-            current_rotation: b.rotation,
+            entries,
+            delta: TilePos { x: 0, y: 0 },
+            rotation_steps: 0,
             moved: false,
         });
     }
@@ -342,12 +404,12 @@ impl TemplateApp {
         let Some(drag) = self.drag.as_mut() else {
             return;
         };
-        let delta = pointer - drag.start_pointer;
-        if delta.length() >= DRAG_THRESHOLD_PX {
+        let delta_px = pointer - drag.start_pointer;
+        if delta_px.length() >= DRAG_THRESHOLD_PX {
             drag.moved = true;
         }
         if drag.moved {
-            drag.current_pos = drag_target_pos(drag.orig_pos, delta, cell);
+            drag.delta = drag_delta(delta_px, cell);
         }
     }
 
@@ -357,17 +419,24 @@ impl TemplateApp {
             return;
         };
         self.history.exec(cmd, &mut self.layout);
-        self.selected = Some(drag.instance_id);
+        // Selection persists; ids may have been pruned already.
+        crate::selection::prune_selection(&self.layout, &mut self.selected);
     }
 
     fn handle_drag_rotation(&mut self, ui: &egui::Ui) {
         let r = ui.input(|i| i.key_pressed(egui::Key::R));
-        let shift = ui.input(|i| i.modifiers.shift);
-        if !r && !shift {
+        if !r {
             return;
         }
+        let shift = ui.input(|i| i.modifiers.shift);
         if let Some(drag) = self.drag.as_mut() {
-            drag.current_rotation = Self::rotate_step(drag.current_rotation);
+            if shift {
+                drag.rotation_steps = drag.rotation_steps.saturating_sub(1);
+            } else {
+                drag.rotation_steps = drag.rotation_steps.saturating_add(1);
+            }
+            // Normalize so rotation_steps in [0,4) is enough; use rem_euclid.
+            drag.rotation_steps %= 4;
             ui.ctx().request_repaint();
         }
     }
@@ -409,16 +478,16 @@ impl TemplateApp {
 
         if response.drag_stopped() {
             let cell = self.cell_size();
+            let pointer = response
+                .interact_pointer_pos()
+                .unwrap_or_else(|| rect.center());
             if let Some(drag) = self.drag.as_mut() {
-                let pointer = response
-                    .interact_pointer_pos()
-                    .unwrap_or_else(|| rect.center());
-                let delta = pointer - drag.start_pointer;
-                if delta.length() >= DRAG_THRESHOLD_PX {
+                let delta_px = pointer - drag.start_pointer;
+                if delta_px.length() >= DRAG_THRESHOLD_PX {
                     drag.moved = true;
                 }
                 if drag.moved {
-                    drag.current_pos = drag_target_pos(drag.orig_pos, delta, cell);
+                    drag.delta = drag_delta(delta_px, cell);
                 }
             }
             self.finish_drag();
@@ -428,7 +497,7 @@ impl TemplateApp {
             let click = response
                 .interact_pointer_pos()
                 .unwrap_or_else(|| rect.center());
-            self.handle_click(rect, click);
+            self.handle_click(ui, rect, click);
         }
 
         self.handle_drag_rotation(ui);
@@ -443,14 +512,20 @@ impl TemplateApp {
 mod tests {
     use super::*;
 
-    fn drag(orig_pos: TilePos, orig_rotation: Rotation) -> DragState {
+    fn entry(id: u64, x: i32, y: i32) -> DragEntry {
+        DragEntry {
+            instance_id: id,
+            orig_pos: TilePos { x, y },
+            orig_rotation: Rotation::Zero,
+        }
+    }
+
+    fn drag_with(entries: Vec<DragEntry>) -> DragState {
         DragState {
-            instance_id: 1,
             start_pointer: Pos2::ZERO,
-            orig_pos,
-            orig_rotation,
-            current_pos: orig_pos,
-            current_rotation: orig_rotation,
+            entries,
+            delta: TilePos { x: 0, y: 0 },
+            rotation_steps: 0,
             moved: true,
         }
     }
@@ -468,38 +543,52 @@ mod tests {
     }
 
     #[test]
+    fn drag_delta_rounds_to_nearest_cell() {
+        let d = drag_delta(Vec2::new(40.0, -30.0), 16.0);
+        assert_eq!(d, TilePos { x: 3, y: -2 });
+    }
+
+    #[test]
     fn should_apply_drag_false_when_not_moved() {
-        let mut d = drag(TilePos { x: 0, y: 0 }, Rotation::Zero);
+        let mut d = drag_with(vec![entry(1, 0, 0)]);
         d.moved = false;
-        d.current_pos = TilePos { x: 5, y: 5 };
+        d.delta = TilePos { x: 5, y: 5 };
         assert!(!should_apply_drag(&d));
     }
 
     #[test]
     fn should_apply_drag_false_when_unchanged() {
-        let d = drag(TilePos { x: 0, y: 0 }, Rotation::Zero);
+        let d = drag_with(vec![entry(1, 0, 0)]);
         assert!(!should_apply_drag(&d));
     }
 
     #[test]
     fn should_apply_drag_true_on_position_change() {
-        let mut d = drag(TilePos { x: 0, y: 0 }, Rotation::Zero);
-        d.current_pos = TilePos { x: 1, y: 0 };
+        let mut d = drag_with(vec![entry(1, 0, 0)]);
+        d.delta = TilePos { x: 1, y: 0 };
+        assert!(should_apply_drag(&d));
+    }
+
+    #[test]
+    fn should_apply_drag_true_on_rotation_change_only() {
+        let mut d = drag_with(vec![entry(1, 0, 0)]);
+        d.rotation_steps = 1;
         assert!(should_apply_drag(&d));
     }
 
     #[test]
     fn pending_move_returns_none_when_drop_invalid() {
         let mut layout = crate::placement::Layout::default();
-        let id = layout
+        layout
             .add("Academy", TilePos { x: 0, y: 0 }, Rotation::Zero)
-            .expect("unwrap");
+            .expect("add valid");
+        let id = layout.next_instance_id;
+        // Reserve id 1 above; add a second building elsewhere.
         layout
             .add("Academy", TilePos { x: 0, y: 5 }, Rotation::Zero)
-            .expect("unwrap");
-        let mut d = drag(TilePos { x: 0, y: 0 }, Rotation::Zero);
-        d.current_pos = TilePos { x: 2, y: 2 };
-        d.instance_id = id;
+            .expect("add valid");
+        let mut d = drag_with(vec![entry(id, 0, 5)]);
+        d.delta = TilePos { x: 2, y: -3 }; // lands inside first building
         assert!(pending_move(&layout, &d).is_none());
     }
 
@@ -508,45 +597,53 @@ mod tests {
         let mut layout = crate::placement::Layout::default();
         let id = layout
             .add("Academy", TilePos { x: 0, y: 0 }, Rotation::Zero)
-            .expect("unwrap");
-        let mut d = drag(TilePos { x: 0, y: 0 }, Rotation::Zero);
-        d.instance_id = id;
+            .expect("add valid");
+        let d = drag_with(vec![entry(id, 0, 0)]);
         assert!(pending_move(&layout, &d).is_none());
     }
 
     #[test]
-    fn pending_move_returns_move_command_when_valid() {
+    fn pending_move_returns_batch_when_valid() {
         let mut layout = crate::placement::Layout::default();
-        let id = layout
+        let a = layout
             .add("Academy", TilePos { x: 0, y: 0 }, Rotation::Zero)
-            .expect("unwrap");
-        let mut d = drag(TilePos { x: 0, y: 0 }, Rotation::Zero);
-        d.instance_id = id;
-        d.current_pos = TilePos { x: 5, y: 5 };
-        d.current_rotation = Rotation::R90;
+            .expect("add valid");
+        let b = layout
+            .add("Academy", TilePos { x: 0, y: 5 }, Rotation::Zero)
+            .expect("add valid");
+        let mut d = drag_with(vec![entry(a, 0, 0), entry(b, 0, 5)]);
+        d.delta = TilePos { x: 5, y: 0 };
         let cmd = pending_move(&layout, &d).expect("cmd");
         match cmd {
-            Command::Move {
-                instance_id,
-                from,
-                to,
-                from_rotation,
-                to_rotation,
-            } => {
-                assert_eq!(instance_id, id);
-                assert_eq!(from, TilePos { x: 0, y: 0 });
-                assert_eq!(to, TilePos { x: 5, y: 5 });
-                assert_eq!(from_rotation, Rotation::Zero);
-                assert_eq!(to_rotation, Rotation::R90);
+            Command::Batch(cmds) => {
+                assert_eq!(cmds.len(), 2);
+                assert!(matches!(cmds[0], Command::Move { instance_id, .. } if instance_id == a));
+                assert!(matches!(cmds[1], Command::Move { instance_id, .. } if instance_id == b));
             }
-            _ => panic!("expected Move"),
+            _ => panic!("expected Batch"),
         }
     }
 
     #[test]
-    fn should_apply_drag_true_on_rotation_change_only() {
-        let mut d = drag(TilePos { x: 0, y: 0 }, Rotation::Zero);
-        d.current_rotation = Rotation::R90;
-        assert!(should_apply_drag(&d));
+    fn valid_drag_ignores_self_buildings() {
+        let mut layout = crate::placement::Layout::default();
+        let a = layout
+            .add("Academy", TilePos { x: 0, y: 0 }, Rotation::Zero)
+            .expect("add valid");
+        let b = layout
+            .add("Academy", TilePos { x: 10, y: 0 }, Rotation::Zero)
+            .expect("add valid");
+        let mut d = drag_with(vec![entry(a, 0, 0), entry(b, 10, 0)]);
+        d.delta = TilePos { x: 0, y: 0 };
+        d.rotation_steps = 0;
+        // Original positions are valid despite selected uniqueness (b still overlaps nothing).
+        assert!(valid_drag(&layout, &d));
+    }
+
+    #[test]
+    fn drag_state_current_pos_applies_delta() {
+        let mut d = drag_with(vec![entry(1, 2, 3)]);
+        d.delta = TilePos { x: 1, y: -1 };
+        assert_eq!(d.current_pos(&d.entries[0]), TilePos { x: 3, y: 2 });
     }
 }

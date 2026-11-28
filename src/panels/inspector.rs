@@ -8,7 +8,37 @@ impl TemplateApp {
     pub(crate) fn inspector_panel(&mut self, ui: &mut egui::Ui) {
         ui.heading("Inspector");
         ui.separator();
-        if let Some(id) = self.selected {
+        self.selected_panel(ui);
+        ui.separator();
+        ui.heading("Issues");
+        self.issues_panel(ui);
+        ui.separator();
+        ui.heading("Stats");
+        self.stats_panel(ui);
+    }
+
+    fn selected_panel(&mut self, ui: &mut egui::Ui) {
+        if self.selected.len() > 1 {
+            let present = self
+                .selected
+                .iter()
+                .filter(|id| self.layout.get(**id).is_some())
+                .count();
+            ui.strong(format!("{present} buildings selected"));
+            ui.separator();
+            if ui.button("Rotate").clicked()
+                && let Some(cmd) = crate::selection::batch_rotate(&self.layout, &self.selected)
+            {
+                self.history.exec(cmd, &mut self.layout);
+                crate::selection::prune_selection(&self.layout, &mut self.selected);
+            }
+            if ui.button("Delete").clicked()
+                && let Some(cmd) = crate::selection::batch_delete(&self.layout, &self.selected)
+            {
+                self.history.exec(cmd, &mut self.layout);
+                self.selected.clear();
+            }
+        } else if let Some(&id) = self.selected.first() {
             let building = self.layout.get(id);
             if let Some(b) = building.filter(|b| all().contains_key(&b.building_identifier))
                 && let Some(def) = all().get(&b.building_identifier)
@@ -34,15 +64,15 @@ impl TemplateApp {
                 if ui.button("Remove").clicked() {
                     self.history
                         .exec(Command::Remove { placed: b.clone() }, &mut self.layout);
-                    self.selected = None;
+                    self.selected.clear();
                 }
             }
         } else {
             ui.label("No building selected.");
         }
+    }
 
-        ui.separator();
-        ui.heading("Issues");
+    fn issues_panel(&self, ui: &mut egui::Ui) {
         let issues = self.layout.validate();
         if issues.is_empty() {
             ui.label("No issues.");
@@ -72,9 +102,9 @@ impl TemplateApp {
                     }
                 });
         }
+    }
 
-        ui.separator();
-        ui.heading("Stats");
+    fn stats_panel(&self, ui: &mut egui::Ui) {
         let mut by_category: std::collections::HashMap<Category, u32> =
             std::collections::HashMap::new();
         let mut total_cells = 0u32;

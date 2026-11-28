@@ -21,6 +21,7 @@ pub enum Command {
         from: Rotation,
         to: Rotation,
     },
+    Batch(Vec<Self>),
 }
 
 impl Command {
@@ -61,6 +62,11 @@ impl Command {
                     b.rotation = *to;
                 }
             }
+            Self::Batch(cmds) => {
+                for c in cmds {
+                    c.apply(layout);
+                }
+            }
         }
     }
 
@@ -99,6 +105,11 @@ impl Command {
                     .find(|b| b.instance_id == *instance_id)
                 {
                     b.rotation = *from;
+                }
+            }
+            Self::Batch(cmds) => {
+                for c in cmds.iter().rev() {
+                    c.revert(layout);
                 }
             }
         }
@@ -346,5 +357,40 @@ mod tests {
         h.exec(Command::Add { placed }, &mut layout);
         assert!(h.undo(&mut layout));
         assert!(layout.next_instance_id >= 6);
+    }
+
+    #[test]
+    fn batch_undo_redo() {
+        let mut layout = Layout::default();
+        let id_a = layout
+            .add("Academy", TilePos { x: 0, y: 0 }, Rotation::Zero)
+            .expect("a");
+        let id_b = layout
+            .add("Academy", TilePos { x: 10, y: 0 }, Rotation::Zero)
+            .expect("b");
+        let mut h = LayoutHistory::default();
+        h.exec(
+            Command::Batch(vec![
+                Command::Rotate {
+                    instance_id: id_a,
+                    from: Rotation::Zero,
+                    to: Rotation::R90,
+                },
+                Command::Rotate {
+                    instance_id: id_b,
+                    from: Rotation::Zero,
+                    to: Rotation::R90,
+                },
+            ]),
+            &mut layout,
+        );
+        assert_eq!(layout.get(id_a).expect("a").rotation, Rotation::R90);
+        assert_eq!(layout.get(id_b).expect("b").rotation, Rotation::R90);
+        assert!(h.undo(&mut layout));
+        assert_eq!(layout.get(id_a).expect("a").rotation, Rotation::Zero);
+        assert_eq!(layout.get(id_b).expect("b").rotation, Rotation::Zero);
+        assert!(h.redo(&mut layout));
+        assert_eq!(layout.get(id_a).expect("a").rotation, Rotation::R90);
+        assert_eq!(layout.get(id_b).expect("b").rotation, Rotation::R90);
     }
 }
