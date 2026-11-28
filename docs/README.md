@@ -3,28 +3,29 @@
 > Цель: каждая подзадача — отдельная агентская сессия (анализ → implem → review).
 
 ## Фаза 0 — Архитектура
-- [0.1](0.1-app-modularization.md) Разбить app.rs на модули
-- [0.2](0.2-state-versioning.md) Версионирование состояния (миграции)
+- [x] [0.1](0.1-app-modularization.md) Разбить app.rs на модули
+- [x] [0.2](0.2-state-versioning.md) Версионирование состояния (миграции)
 
 ## Фаза 1 — Ядро лейаута
-- [1.1](1.1-undo-redo.md) Undo/redo
-- [x](1.2-drag-move-ghost.md) Drag & drop + ghost-превью
-- [x](1.3-validation.md) Валидация лейаута
-- [1.4](1.4-multi-select-edit.md) Множественное выделение + редактирование
+- [x] [1.1](1.1-undo-redo.md) Undo/redo
+- [x] [1.2](1.2-drag-move-ghost.md) Drag & drop + ghost-превью
+- [x] [1.3](1.3-validation.md) Валидация лейаута
+- [x] [1.4](1.4-multi-select-edit.md) Множественное выделение + редактирование
+- [ ] [1.5](1.5-code-review.md) Code review: исправление найденных замечаний (подзадачи: 1.5.1–1.5.4)
 
 ## Фаза 2 — Аналитика
-- [2.1](2.1-stats.md) Сводка (труд/материалы/рабочие силы)
-- [2.2](2.2-hierarchy-view.md) Иерархия (prereqs/lower-tier)
-- [2.3](2.3-export-import.md) Экспорт/импорт + URL-шаринг
+- [ ] [2.1](2.1-stats.md) Сводка (труд/материалы/рабочие силы)
+- [ ] [2.2](2.2-hierarchy-view.md) Иерархия (prereqs/lower-tier)
+- [ ] [2.3](2.3-export-import.md) Экспорт/импорт + URL-шаринг
 
 ## Фаза 3 — UX/UI
-- [3.1](3.1-palette-search.md) Поиск/фильтр палетки
-- [3.2](3.2-shortcuts.md) Клавиатурные шорткаты + HUD
-- [3.3](3.3-highlights-tooltips.md) Подсветки и тултипы
+- [ ] [3.1](3.1-palette-search.md) Поиск/фильтр палетки
+- [ ] [3.2](3.2-shortcuts.md) Клавиатурные шорткаты + HUD
+- [ ] [3.3](3.3-highlights-tooltips.md) Подсветки и тултипы
 
 ## Фаза 4 — Тесты и CI
-- [4.1](4.1-tests.md) Расширение тестов
-- [4.2](4.2-ci.md) CI matrix
+- [ ] [4.1](4.1-tests.md) Расширение тестов
+- [ ] [4.2](4.2-ci.md) CI matrix
 
 ## Фаза 5 — Данные (после 0–4)
 - Data-pipeline: скрипт проверки/загрузки `building_dump.json`, отдельный CI-шаг.
