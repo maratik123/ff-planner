@@ -23,6 +23,7 @@ Rust + egui/eframe desktop and WASM app ("ff-planner", a settlement/layout plann
 
 ## CI
 `.github/workflows/rust.yml`: cargo check (native + wasm32), fmt, clippy, `cargo test --lib`, `trunk build`, release builds for macOS/Windows/Linux(musl via cross). `pages.yml` deploys `trunk build --release --public-url ...` to GitHub Pages on main.
+При изменениях CI запускай `actionlint` (workflow-файлы), при изменениях shell-файлов — `shellcheck`.
 
 ## Git workflow
 - Commit yourself as you work — do not wait for owner permission to commit.
