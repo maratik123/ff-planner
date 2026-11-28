@@ -75,7 +75,7 @@ pub enum BuildsiteClearingMode {
 /// A single-element set is the Single case.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Prerequisite {
-    alternatives: Vec<String>,
+    pub alternatives: Vec<String>,
 }
 
 impl Prerequisite {
@@ -96,14 +96,11 @@ impl Prerequisite {
             .iter()
             .any(|alt| identifiers.contains(alt))
     }
+}
 
-    /// Humans-readable form, e.g. "`Barn` or `GoatBarn`".
-    pub fn label(&self) -> String {
-        self.alternatives.join(" or ")
-    }
-
-    pub fn alternatives(&self) -> &[String] {
-        &self.alternatives
+impl std::fmt::Display for Prerequisite {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.alternatives.join(" or "))
     }
 }
 
@@ -333,7 +330,7 @@ mod tests {
             }
         );
         assert_eq!(building.materials.get("ItemPlanks"), Some(&50));
-        assert!(building.prerequisites.iter().any(|p| p.label() == "School"));
+        assert!(building.prerequisites.iter().any(|p| p.to_string() == "School"));
     }
 
     #[test]

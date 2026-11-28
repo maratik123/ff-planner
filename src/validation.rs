@@ -68,13 +68,10 @@ pub fn validate_layout(layout: &Layout) -> Vec<Issue> {
             continue;
         };
         let mut prereqs: Vec<&Prerequisite> = def.prerequisites.iter().collect();
-        prereqs.sort_by_key(|p| p.label());
+        prereqs.sort_by_key(|p| p.to_string());
         for prereq in prereqs {
             // Skip prereqs with no known building identifiers (e.g. Tech_NNN entries).
-            let has_known = prereq
-                .alternatives()
-                .iter()
-                .any(|alt| all().contains_key(alt));
+            let has_known = prereq.alternatives.iter().any(|alt| all().contains_key(alt));
             if !has_known {
                 continue;
             }
@@ -82,7 +79,7 @@ pub fn validate_layout(layout: &Layout) -> Vec<Issue> {
                 issues.push(Issue {
                     kind: IssueKind::WithoutPrerequisite,
                     instance_id: b.instance_id,
-                    detail: format!("requires {}", prereq.label()),
+                    detail: format!("requires {}", prereq),
                 });
             }
         }
