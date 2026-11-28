@@ -349,6 +349,51 @@ mod tests {
         );
     }
     #[test]
+    fn occupied_cells_cache_distinguishes_instances() {
+        let mut layout = Layout::default();
+        let a = layout
+            .add("Academy", TilePos { x: 0, y: 0 }, Rotation::Zero)
+            .expect("a");
+        let b = layout
+            .add("Academy", TilePos { x: 10, y: 0 }, Rotation::Zero)
+            .expect("b");
+        let a_b = layout.get(a).expect("a").clone();
+        let b_b = layout.get(b).expect("b").clone();
+        let cache = OccupiedCells::new(&layout);
+        let cells_a = cache.occupied_cells(&a_b);
+        let cells_b = cache.occupied_cells(&b_b);
+        assert_ne!(cells_a, cells_b);
+        assert!(!std::rc::Rc::ptr_eq(&cells_a, &cells_b));
+    }
+
+    #[test]
+    fn occupied_cells_cache_can_place_ignoring_with_ignore_set() {
+        let mut layout = Layout::default();
+        let a = layout
+            .add("Academy", TilePos { x: 0, y: 0 }, Rotation::Zero)
+            .expect("a");
+        let _b = layout
+            .add("Academy", TilePos { x: 10, y: 0 }, Rotation::Zero)
+            .expect("b");
+        let cache = OccupiedCells::new(&layout);
+        let ignore: std::collections::HashSet<u64> = std::iter::once(a).collect();
+        // Ignoring a, placing at a's old position is fine.
+        assert!(cache.can_place_ignoring(
+            "Academy",
+            TilePos { x: 0, y: 0 },
+            Rotation::Zero,
+            &ignore
+        ));
+        // Without ignoring a, it is occupied.
+        assert!(!cache.can_place_ignoring(
+            "Academy",
+            TilePos { x: 0, y: 0 },
+            Rotation::Zero,
+            &std::collections::HashSet::new()
+        ));
+    }
+
+    #[test]
     fn layout_serde_roundtrip() {
         let mut layout = Layout::default();
         layout

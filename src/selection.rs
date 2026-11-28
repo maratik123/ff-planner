@@ -150,6 +150,30 @@ mod tests {
         assert!(sel.contains(&c));
     }
     #[test]
+    fn extend_range_empty_selection_pushes_id() {
+        let (layout, a, _) = add_two();
+        let mut sel = Vec::new();
+        extend_selection_range(&layout, &mut sel, a);
+        assert_eq!(sel, vec![a]);
+    }
+
+    #[test]
+    fn extend_range_missing_anchor_pushes_id() {
+        let (layout, _, b) = add_two();
+        let mut sel = vec![999];
+        extend_selection_range(&layout, &mut sel, b);
+        assert!(sel.contains(&b));
+    }
+
+    #[test]
+    fn extend_range_missing_id_pushes_id() {
+        let (layout, a, _) = add_two();
+        let mut sel = vec![a];
+        extend_selection_range(&layout, &mut sel, 999);
+        assert!(sel.contains(&999));
+    }
+
+    #[test]
     fn prune_removes_stale_and_duplicates() {
         let (layout, a, _) = add_two();
         let mut sel = vec![a, a, 999];
