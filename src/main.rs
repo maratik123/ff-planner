@@ -1,22 +1,24 @@
 #![warn(clippy::all, rust_2018_idioms)]
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 
+#[cfg(not(target_arch = "wasm32"))]
+fn load_icon() -> Option<egui::IconData> {
+    eframe::icon_data::from_png_bytes(&include_bytes!("../assets/favicon-512x512.png")[..]).ok()
+}
+
 // When compiling natively:
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result {
     env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
 
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_inner_size([400.0, 300.0])
+        .with_min_inner_size([300.0, 220.0]);
+    if let Some(icon) = load_icon() {
+        viewport = viewport.with_icon(icon);
+    }
     let native_options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([400.0, 300.0])
-            .with_min_inner_size([300.0, 220.0])
-            .with_icon(
-                // NOTE: Adding an icon is optional
-                eframe::icon_data::from_png_bytes(
-                    &include_bytes!("../assets/favicon-512x512.png")[..],
-                )
-                .expect("Failed to load icon"),
-            ),
+        viewport,
         ..Default::default()
     };
     eframe::run_native(
@@ -63,12 +65,22 @@ fn main() {
                     loading_text.remove();
                 }
                 Err(err) => {
+                    log::error!("Failed to start eframe: {err:?}");
                     loading_text.set_inner_html(
                         "<p> The app has crashed. See the developer console for details. </p>",
                     );
-                    panic!("Failed to start eframe: {err:?}");
                 }
             }
         }
     });
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    use super::load_icon;
+
+    #[test]
+    fn embedded_icon_loads() {
+        assert!(load_icon().is_some());
+    }
 }

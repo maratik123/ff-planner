@@ -69,13 +69,15 @@ impl Default for TemplateApp {
 
 impl TemplateApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        let mut app: Self = if let Some(storage) = cc.storage {
-            eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default()
-        } else {
-            Default::default()
-        };
+        let mut app = Self::load_from_storage(cc.storage);
         app.migrate();
         app
+    }
+
+    fn load_from_storage(storage: Option<&dyn eframe::Storage>) -> Self {
+        storage
+            .and_then(|s| eframe::get_value(s, eframe::APP_KEY))
+            .unwrap_or_default()
     }
 
     fn undo(&mut self) {
@@ -218,6 +220,23 @@ mod tests {
         let mut app: TemplateApp = serde_json::from_str(json).expect("parse save");
         assert!(app.selected.is_empty(), "selection should be empty");
         assert!(app.migrate());
+    }
+
+    #[test]
+    fn corrupted_save_yields_default_app() {
+        struct MockStorage(Option<String>);
+        impl eframe::Storage for MockStorage {
+            fn get_string(&self, _key: &str) -> Option<String> {
+                self.0.clone()
+            }
+            fn set_string(&mut self, _key: &str, _value: String) {}
+            fn remove_string(&mut self, _key: &str) {}
+            fn flush(&mut self) {}
+        }
+        let storage = MockStorage(Some("not valid ron {{{".to_owned()));
+        let app = TemplateApp::load_from_storage(Some(&storage));
+        assert_eq!(app.schema_version, CURRENT_SCHEMA_VERSION);
+        assert_eq!(app.layout.buildings.len(), 0);
     }
 
     #[test]
