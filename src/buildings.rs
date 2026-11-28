@@ -15,14 +15,21 @@ pub struct Rect {
 }
 
 impl Rect {
-    // Floored and clamped so the cast can only truncate unreachable huge values.
-    #[expect(clippy::cast_possible_truncation)]
+    // Floored, clamped and NaN-safe so the cast can only truncate unreachable huge values.
     fn from_floats(width: f32, height: f32) -> Self {
         Self {
-            width: width.floor().max(0.0).min(u32::MAX as f32) as u32,
-            height: height.floor().max(0.0).min(u32::MAX as f32) as u32,
+            width: clamp_dim(width),
+            height: clamp_dim(height),
         }
     }
+}
+
+#[expect(clippy::cast_possible_truncation, reason = "clamped to u32 range")]
+fn clamp_dim(v: f32) -> u32 {
+    if !v.is_finite() {
+        return 0;
+    }
+    v.floor().clamp(0.0, u32::MAX as f32) as u32
 }
 
 impl<'de> Deserialize<'de> for Rect {
@@ -347,6 +354,24 @@ mod tests {
             Rect {
                 width: 5,
                 height: 3
+            }
+        );
+    }
+
+    #[test]
+    fn rect_from_floats_handles_nan_and_infinity() {
+        assert_eq!(
+            Rect::from_floats(f32::NAN, f32::INFINITY),
+            Rect {
+                width: 0,
+                height: 0
+            }
+        );
+        assert_eq!(
+            Rect::from_floats(f32::NEG_INFINITY, 2.5),
+            Rect {
+                width: 0,
+                height: 2
             }
         );
     }

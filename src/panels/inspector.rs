@@ -17,6 +17,12 @@ impl TemplateApp {
         self.stats_panel(ui);
     }
 
+    fn single_selected_building(&self) -> Option<&crate::placement::PlacedBuilding> {
+        let id = *self.selected.first()?;
+        let b = self.layout.get(id)?;
+        all().contains_key(&b.building_identifier).then_some(b)
+    }
+
     fn selected_panel(&mut self, ui: &mut egui::Ui) {
         if self.selected.len() > 1 {
             let present = self
@@ -38,11 +44,8 @@ impl TemplateApp {
                 self.history.exec(cmd, &mut self.layout);
                 self.selected.clear();
             }
-        } else if let Some(&id) = self.selected.first() {
-            let building = self.layout.get(id);
-            if let Some(b) = building.filter(|b| all().contains_key(&b.building_identifier))
-                && let Some(def) = all().get(&b.building_identifier)
-            {
+        } else if let Some(b) = self.single_selected_building().cloned() {
+            if let Some(def) = all().get(&b.building_identifier) {
                 let dims = b.rotation.dimensions(def.grid);
                 ui.horizontal(|ui| {
                     ui.colored_label(category_color(def.category), "■");
@@ -63,9 +66,11 @@ impl TemplateApp {
                 ui.separator();
                 if ui.button("Remove").clicked() {
                     self.history
-                        .exec(Command::Remove { placed: b.clone() }, &mut self.layout);
+                        .exec(Command::Remove { placed: b }, &mut self.layout);
                     self.selected.clear();
                 }
+            } else {
+                ui.label("No building selected.");
             }
         } else {
             ui.label("No building selected.");
@@ -127,5 +132,37 @@ impl TemplateApp {
                 ui.label(format!("{cat:?}: {count}"));
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::placement::{Rotation, TilePos};
+
+    #[test]
+    fn single_selected_building_none_when_missing() {
+        let app = TemplateApp {
+            selected: vec![999],
+            ..Default::default()
+        };
+        assert!(app.single_selected_building().is_none());
+    }
+
+    #[test]
+    fn single_selected_building_some_when_present() {
+        let mut app = TemplateApp::default();
+        let id = app
+            .layout
+            .add("Academy", TilePos { x: 0, y: 0 }, Rotation::Zero)
+            .expect("add valid");
+        app.selected = vec![id]; // selection set after layout mutation
+        assert!(app.single_selected_building().is_some());
+    }
+
+    #[test]
+    fn single_selected_building_none_when_empty() {
+        let app = TemplateApp::default();
+        assert!(app.single_selected_building().is_none());
     }
 }

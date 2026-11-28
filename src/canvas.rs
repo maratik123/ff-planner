@@ -7,6 +7,23 @@ use crate::panels::category_color;
 use crate::placement::{PlacedBuilding, Rotation, TilePos};
 
 const CELL_PX: f32 = 16.0;
+
+/// Normalize drag rotation steps into [0, 4).
+fn next_rotation_steps(steps: u8, shift: bool) -> u8 {
+    let delta: i32 = if shift { -1 } else { 1 };
+    u8::try_from((i32::from(steps) + delta).rem_euclid(4)).unwrap_or(0)
+}
+
+/// Clamp a u32 grid dimension to a sane i32 for centering math.
+fn grid_dim(v: u32) -> i32 {
+    i32::try_from(v).unwrap_or(i32::MAX)
+}
+
+/// Truncate a bounded grid coordinate to i32 (expects bounded values).
+#[expect(clippy::cast_possible_truncation, reason = "bounded grid coordinates")]
+fn to_i32(v: f32) -> i32 {
+    v as i32
+}
 const DRAG_THRESHOLD_PX: f32 = 5.0;
 
 /// One building captured at the start of a drag.
@@ -43,11 +60,10 @@ impl DragState {
 }
 
 /// Destination tile for a drag: the original position shifted by the pointer delta.
-#[expect(clippy::cast_possible_truncation, reason = "bounded grid coordinates")]
 fn drag_target_pos(orig_pos: TilePos, delta_px: Vec2, cell: f32) -> TilePos {
     TilePos {
-        x: orig_pos.x + (delta_px.x / cell).round() as i32,
-        y: orig_pos.y + (delta_px.y / cell).round() as i32,
+        x: orig_pos.x + to_i32((delta_px.x / cell).round()),
+        y: orig_pos.y + to_i32((delta_px.y / cell).round()),
     }
 }
 
@@ -144,13 +160,12 @@ impl TemplateApp {
         self.origin(rect) + Vec2::new(pos.x as f32, pos.y as f32) * self.cell_size()
     }
 
-    #[expect(clippy::cast_possible_truncation, reason = "bounded grid coordinates")]
     fn screen_to_grid(&self, rect: egui::Rect, screen: Pos2) -> TilePos {
         let cell = self.cell_size();
         let o = self.origin(rect);
         TilePos {
-            x: ((screen.x - o.x) / cell).floor() as i32,
-            y: ((screen.y - o.y) / cell).floor() as i32,
+            x: to_i32(((screen.x - o.x) / cell).floor()),
+            y: to_i32(((screen.y - o.y) / cell).floor()),
         }
     }
 
@@ -169,14 +184,10 @@ impl TemplateApp {
     fn paint_grid(&self, painter: &egui::Painter, rect: egui::Rect) {
         let o = self.origin(rect);
         let cell = self.cell_size();
-        #[expect(clippy::cast_possible_truncation, reason = "bounded grid coordinates")]
-        fn cell_at(v: f32) -> i32 {
-            v as i32
-        }
-        let start_gx = cell_at(((rect.min.x - o.x) / cell).floor());
-        let start_gy = cell_at(((rect.min.y - o.y) / cell).floor());
-        let end_gx = cell_at(((rect.max.x - o.x) / cell).ceil());
-        let end_gy = cell_at(((rect.max.y - o.y) / cell).ceil());
+        let start_gx = to_i32(((rect.min.x - o.x) / cell).floor());
+        let start_gy = to_i32(((rect.min.y - o.y) / cell).floor());
+        let end_gx = to_i32(((rect.max.x - o.x) / cell).ceil());
+        let end_gy = to_i32(((rect.max.y - o.y) / cell).ceil());
         let grid_color = Color32::from_gray(0x33);
         for gx in start_gx..=end_gx {
             let x = o.x + gx as f32 * cell;
@@ -235,17 +246,12 @@ impl TemplateApp {
     }
 
     fn hit_building(&self, rect: egui::Rect, pos: Pos2) -> Option<u64> {
-        for b in self.layout.buildings.iter().rev() {
-            let Some(def) = all().get(&b.building_identifier) else {
-                continue;
-            };
+        self.layout.buildings.iter().rev().find_map(|b| {
+            let def = all().get(&b.building_identifier)?;
             let dims = b.rotation.dimensions(def.grid);
             let br = self.building_rect(rect, b, dims);
-            if br.contains(pos) {
-                return Some(b.instance_id);
-            }
-        }
-        None
+            br.contains(pos).then_some(b.instance_id)
+        })
     }
 
     fn paint_ghost(&self, painter: &egui::Painter, rect: egui::Rect) {
@@ -322,8 +328,8 @@ impl TemplateApp {
         };
         let Some(def) = all().get(&sel) else { return };
         let place = TilePos {
-            x: grid.x - i32::try_from(def.grid.width).unwrap_or(0) / 2,
-            y: grid.y - i32::try_from(def.grid.height).unwrap_or(0) / 2,
+            x: grid.x - grid_dim(def.grid.width) / 2,
+            y: grid.y - grid_dim(def.grid.height) / 2,
         };
         if self.layout.can_place(&sel, place, Rotation::Zero, None) {
             let placed = PlacedBuilding {
@@ -340,18 +346,7 @@ impl TemplateApp {
     }
 
     fn handle_click(&mut self, ui: &egui::Ui, rect: egui::Rect, click: Pos2) {
-        let mut hit: Option<u64> = None;
-        for b in self.layout.buildings.iter().rev() {
-            let Some(def) = all().get(&b.building_identifier) else {
-                continue;
-            };
-            let dims = b.rotation.dimensions(def.grid);
-            let br = self.building_rect(rect, b, dims);
-            if br.contains(click) {
-                hit = Some(b.instance_id);
-                break;
-            }
-        }
+        let hit = self.hit_building(rect, click);
         let modifiers = ui.input(|i| i.modifiers);
         if let Some(id) = hit {
             if modifiers.command {
@@ -430,14 +425,10 @@ impl TemplateApp {
         }
         let shift = ui.input(|i| i.modifiers.shift);
         if let Some(drag) = self.drag.as_mut() {
-            if shift {
-                drag.rotation_steps = drag.rotation_steps.saturating_sub(1);
-            } else {
-                drag.rotation_steps = drag.rotation_steps.saturating_add(1);
-            }
-            // Normalize so rotation_steps in [0,4) is enough; use rem_euclid.
-            drag.rotation_steps %= 4;
+            drag.rotation_steps = next_rotation_steps(drag.rotation_steps, shift);
             ui.ctx().request_repaint();
+        } else {
+            self.rotate_selected();
         }
     }
 
@@ -501,10 +492,6 @@ impl TemplateApp {
         }
 
         self.handle_drag_rotation(ui);
-
-        if ui.input(|i| i.key_pressed(egui::Key::R)) && self.drag.is_none() {
-            self.rotate_selected();
-        }
     }
 }
 
@@ -638,6 +625,33 @@ mod tests {
         d.rotation_steps = 0;
         // Original positions are valid despite selected uniqueness (b still overlaps nothing).
         assert!(valid_drag(&layout, &d));
+    }
+
+    #[test]
+    fn next_rotation_steps_wraps_around() {
+        assert_eq!(next_rotation_steps(0, false), 1);
+        assert_eq!(next_rotation_steps(3, false), 0);
+        assert_eq!(next_rotation_steps(0, true), 3);
+        assert_eq!(next_rotation_steps(3, true), 2);
+    }
+
+    #[test]
+    fn grid_dim_clamps_huge_values() {
+        assert_eq!(grid_dim(u32::MAX), i32::MAX);
+        assert_eq!(grid_dim(5), 5);
+    }
+
+    #[test]
+    fn hit_building_returns_topmost_building() {
+        let mut app = TemplateApp::default();
+        let id = app
+            .layout
+            .add("Academy", TilePos { x: 0, y: 0 }, Rotation::Zero)
+            .expect("add valid");
+        let rect = egui::Rect::from_min_size(Pos2::ZERO, Vec2::new(200.0, 200.0));
+        // Academy is 5x4 cells, cell 16px: covers (0,0)-(80,64).
+        assert_eq!(app.hit_building(rect, Pos2::new(10.0, 10.0)), Some(id));
+        assert_eq!(app.hit_building(rect, Pos2::new(150.0, 150.0)), None);
     }
 
     #[test]
