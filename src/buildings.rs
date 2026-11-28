@@ -330,7 +330,12 @@ mod tests {
             }
         );
         assert_eq!(building.materials.get("ItemPlanks"), Some(&50));
-        assert!(building.prerequisites.iter().any(|p| p.to_string() == "School"));
+        assert!(
+            building
+                .prerequisites
+                .iter()
+                .any(|p| p.to_string() == "School")
+        );
     }
 
     #[test]
